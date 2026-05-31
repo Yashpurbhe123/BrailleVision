@@ -88,13 +88,13 @@ Decoded text is corrected in real-time by a contextual LLM (Groq Llama-3.1), tra
          │                        Perspective Correction →       │
          │                        Side Detection → Auto-Mirror   │
          │                                                       │
-         │  ② HybridBrailleDetector                             │
-         │      OpenCV SimpleBlobDetector (Fast CV Path)        │
+         │  ② HybridBrailleDetector                              │
+         │      OpenCV SimpleBlobDetector (Fast CV Path)         │
          │    + YOLOv8 Nano Inference (Deep AI Path)             │
          │    → Confidence-Weighted NMS Fusion                   │
          │                                                       │
-         │  ③ BrailleCellSegmenter  DBSCAN Spatial Clustering   │
-         │                          → Ordered 6-slot Cell Grid  │
+         │  ③ BrailleCellSegmenter  DBSCAN Spatial Clustering    │
+         │                          → Ordered 6-slot Cell Grid   │
          │                                                       │
          │  ④ CellClassifier (EfficientNet-B3 Backbone)          │
          │      Direct 46-class neural character prediction      │
@@ -102,12 +102,12 @@ Decoded text is corrected in real-time by a contextual LLM (Groq Llama-3.1), tra
          │  ⑤ BrailleDecoder   Grade 1 + Grade 2 lookup tables   │
          │                     + Fuzzy Hamming state-machine     │
          │                                                       │
-         │  ⑥ AIErrorCorrector  Groq Llama-3.1-8b-instant       │
+         │  ⑥ AIErrorCorrector  Groq Llama-3.1-8b-instant        │
          │                      + pyspellchecker (Fallback)      │
          │                                                       │
          │  ⑦ BrailleTranslator  deep-translator → 6 Langs       │
          │                                                       │
-         │  ⑧ BrailleTTSEngine   Microsoft Edge Neural TTS      │
+         │  ⑧ BrailleTTSEngine   Microsoft Edge Neural TTS       │
          │                        → base64 MP3 Audio Bytes       │
          │                                                       │
          └──────────────────────────┬────────────────────────────┘
@@ -326,8 +326,8 @@ source venv/bin/activate   # macOS / Linux
 pip install -r requirements.txt
 
 # Copy the configuration environment file
-copy .env.example .env     # Windows
-cp .env.example .env       # macOS / Linux
+copy .env     # Windows
+cp .env       # macOS / Linux
 
 # Start the uvicorn API server
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
