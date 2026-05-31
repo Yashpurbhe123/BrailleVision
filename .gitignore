@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+ENV/
+env/
+
+# Databases & local configs
+*.db
+*.db-journal
+*.sqlite
+.env
+
+# Large Datasets & Archives
+*.tar
+*.zip
+*.gz
+*.rar
+clean_dataset.tar
+Dataset & Training/clean_dataset.tar
+
+# Cache & Temporary Files
+backend/data/tts_cache/
+mobile/.expo/
+mobile/node_modules/
+mobile/npm-debug.log*
+mobile/yarn-debug.log*
+mobile/yarn-error.log*
+mobile/.expo-shared/
