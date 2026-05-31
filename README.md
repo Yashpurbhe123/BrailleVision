@@ -9,25 +9,31 @@
 ![YOLOv8](https://img.shields.io/badge/YOLOv8-Nano-FF4B4B?style=for-the-badge&logo=ultralytics&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
-**A mobile-first, real-time AI platform that reads physical embossed Braille from a camera and converts it to speech in under 200ms — empowering blind and visually impaired users worldwide.**
+**A mobile-first, real-time AI platform that reads physical embossed Braille from a camera feed and converts it to speech in under 200ms — empowering blind and visually impaired users worldwide.**
 
 </div>
 
 ---
 
-## 📖 Table of Contents
+> [!IMPORTANT]
+> **BrailleVision AI** is a fully integrated, assistive technology suite built for the **BrailleVision Hackathon 2026**. It leverages a state-of-the-art hybrid computer vision pipeline and custom neural classifiers to translate physical embossed paper sheets into clear speech and 6 target languages in real-world lighting conditions.
+
+---
+
+<details>
+<summary>📖 <b>Table of Contents (Click to Expand)</b></summary>
 
 1. [Project Overview](#-project-overview)
-2. [System Architecture](#️-system-architecture)
+2. [System Architecture](#-system-architecture)
 3. [How It Works — End-to-End Pipeline](#-how-it-works--end-to-end-pipeline)
-   - [Step 1: Image Preprocessing](#step-1-image-preprocessing-corepreprocesspy)
-   - [Step 2: Hybrid Dot Detection](#step-2-hybrid-dot-detection-coredetectorpy)
-   - [Step 3: Cell Segmentation](#step-3-cell-segmentation-coresegmenterpy)
-   - [Step 4: Braille Decoding](#step-4-braille-decoding-coredecoderpy)
-   - [Step 5: AI Error Correction](#step-5-ai-error-correction-corecorrectorpy)
-   - [Step 6: Multi-Language Translation](#step-6-multi-language-translation-coretranslatorpy)
-   - [Step 7: Neural Speech Synthesis](#step-7-neural-speech-synthesis-coretts_enginepy)
-   - [Step 8: Context Memory](#step-8-context-memory-aicontext_memorypy)
+   - [Step 1: Image Preprocessing](#step-1-image-preprocessing)
+   - [Step 2: Hybrid Dot Detection](#step-2-hybrid-dot-detection)
+   - [Step 3: Cell Segmentation](#step-3-cell-segmentation)
+   - [Step 4: Braille Decoding](#step-4-braille-decoding)
+   - [Step 5: AI Error Correction](#step-5-ai-error-correction)
+   - [Step 6: Multi-Language Translation](#step-6-multi-language-translation)
+   - [Step 7: Neural Speech Synthesis](#step-7-neural-speech-synthesis)
+   - [Step 8: Context Memory](#step-8-context-memory)
 4. [Key Features](#-key-features)
 5. [Tech Stack](#-tech-stack)
 6. [Codebase Layout](#-codebase-layout)
@@ -35,27 +41,29 @@
 8. [Environment Configuration](#-environment-configuration)
 9. [API Reference](#-api-reference)
 10. [Mobile App Screens](#-mobile-app-screens)
-11. [Training Pipeline](#-training-pipeline)
+11. [Model Architecture & Datasets](#-model-architecture--datasets)
 12. [Testing & Validation](#-testing--validation)
-13. [Accessibility Compliance](#️-accessibility-compliance)
+13. [Accessibility Compliance](#-accessibility-compliance)
 14. [Performance Targets](#-performance-targets)
 15. [License](#-license)
+
+</details>
 
 ---
 
 ## 🔭 Project Overview
 
-**BrailleVision AI** is a full-stack assistive technology platform built for the BrailleVision Hackathon 2026. It solves one of the most challenging computer vision problems in accessibility: **reading physical, embossed Braille paper from a mobile camera in real-world, uncontrolled conditions**.
+**BrailleVision AI** solves one of the most challenging computer vision accessibility problems: **reading physical, embossed Braille paper from a mobile camera in real-world, uncontrolled conditions**.
 
-Unlike simple digital Braille converters, this system handles:
-- **Real embossed paper** with uneven dot heights, shadows, and texture noise
-- **Varied lighting** — dim rooms, harsh sunlight, mixed light sources
-- **Camera shake** and motion blur
-- **Skewed or tilted** paper at any angle
-- **Front and back** of the Braille page (raised vs. indented dots)
-- **Grade 1 and Grade 2** standard Braille (including full contraction sets)
+Unlike simple digital Braille simulators, our custom hardware-focused pipeline is engineered to handle:
+* **Real embossed paper** with uneven dot heights, creases, and physical texture noise.
+* **Adverse lighting** — casting shadows, dim rooms, mixed light sources, and glares.
+* **Camera shake** and motion blur from hand-held captures.
+* **Perspective tilt** and paper skew at severe angles.
+* **Double-sided embossing (interlineations)** — distinguishing front-side dots from back-side indentations.
+* **Grade 1 & Grade 2 Braille** standards, including complex multi-cell contractions and affixes.
 
-The decoded Braille text is then optionally corrected by an LLM (Groq Llama-3.1), translated into 6 languages, and read aloud using Microsoft Edge Neural TTS — all within a single scan.
+Decoded text is corrected in real-time by a contextual LLM (Groq Llama-3.1), translated into 6 languages, and read aloud using neural Edge TTS voices — all within a single streamlined scan.
 
 ---
 
@@ -67,47 +75,48 @@ The decoded Braille text is then optionally corrected by an LLM (Groq Llama-3.1)
          │  expo-camera          Live camera frame capture       │
          │  expo-speech + AV     Native & neural TTS playback    │
          │  react-native-svg     SVG dot overlay on viewfinder   │
-         │  Zustand store        Centralized state management     │
-         │  Expo Router          File-system based navigation     │
+         │  Zustand store        Centralized state management    │
+         │  Expo Router          File-system based navigation    │
          └──────────────────────────┬────────────────────────────┘
                                     │  HTTPS multipart/form-data
-                                    │  (JPEG frames + JSON opts)
+                                    │  (JPEG frames + JSON options)
                                     ▼
                  🐍 BACKEND SERVER (FastAPI · Python 3.12)
          ┌───────────────────────────────────────────────────────┐
          │                                                       │
-         │  ① ImagePreprocessor   CLAHE → Shadow Removal →      │
+         │  ① ImagePreprocessor   CLAHE → Shadow Removal →       │
          │                        Perspective Correction →       │
-         │                        Side Detection → Mirror        │
+         │                        Side Detection → Auto-Mirror   │
          │                                                       │
          │  ② HybridBrailleDetector                             │
-         │      OpenCV SimpleBlobDetector (fast path)           │
-         │    + YOLOv8 Nano inference (deep path)               │
-         │    → Confidence-weighted NMS Fusion                  │
+         │      OpenCV SimpleBlobDetector (Fast CV Path)        │
+         │    + YOLOv8 Nano Inference (Deep AI Path)             │
+         │    → Confidence-Weighted NMS Fusion                   │
          │                                                       │
-         │  ③ BrailleCellSegmenter  DBSCAN spatial clustering   │
-         │                          → ordered 6-dot cell list   │
+         │  ③ BrailleCellSegmenter  DBSCAN Spatial Clustering   │
+         │                          → Ordered 6-slot Cell Grid  │
          │                                                       │
-         │  ④ BrailleDecoder   Grade 1 + Grade 2 lookup tables  │
-         │                     + Fuzzy Hamming matching         │
+         │  ④ CellClassifier (EfficientNet-B3 Backbone)          │
+         │      Direct 46-class neural character prediction      │
          │                                                       │
-         │  ⑤ AIErrorCorrector  Groq Llama-3.1 (primary)       │
-         │                      + pyspellchecker (fallback)     │
+         │  ⑤ BrailleDecoder   Grade 1 + Grade 2 lookup tables   │
+         │                     + Fuzzy Hamming state-machine     │
          │                                                       │
-         │  ⑥ BrailleTranslator  Google Translate → 6 langs    │
+         │  ⑥ AIErrorCorrector  Groq Llama-3.1-8b-instant       │
+         │                      + pyspellchecker (Fallback)      │
          │                                                       │
-         │  ⑦ BrailleTTSEngine   Microsoft edge-tts neural      │
-         │                        voices → base64 MP3 bytes     │
+         │  ⑦ BrailleTranslator  deep-translator → 6 Langs       │
          │                                                       │
-         │  ⑧ ContextMemory  Sliding window sentence buffer     │
+         │  ⑧ BrailleTTSEngine   Microsoft Edge Neural TTS      │
+         │                        → base64 MP3 Audio Bytes       │
          │                                                       │
          └──────────────────────────┬────────────────────────────┘
-                                    │  SQLAlchemy ORM (aiosqlite)
+                                    │  SQLAlchemy Async ORM
                                     ▼
-                        📂 SQLite DATABASE
+                         📂 SQLite DATABASE
          ┌───────────────────────────────────────────────────────┐
-         │  braillevision.db   ScanHistory ORM model            │
-         │  ./data/            Audio .mp3 asset cache           │
+         │  braillevision.db   ScanHistory table schema          │
+         │  ./data/            Audio MP3 file persistent cache   │
          └───────────────────────────────────────────────────────┘
 ```
 
@@ -115,440 +124,264 @@ The decoded Braille text is then optionally corrected by an LLM (Groq Llama-3.1)
 
 ## 🔬 How It Works — End-to-End Pipeline
 
-Every image — whether from a live camera frame or a full capture — flows through the `BrailleAIPipeline` orchestrator (`backend/ai/pipeline.py`). The pipeline has two modes:
+Every scanned frame — whether a live camera capture or full gallery upload — is orchestrated by `BrailleAIPipeline` (`backend/ai/pipeline.py`) through two optimized modes:
 
 | Mode | Trigger | Skips | Target Latency |
 |:-----|:--------|:------|:---------------|
-| **Live Frame** (`process_live_frame`) | Continuous camera loop | Error correction, TTS | < 200 ms |
-| **Full Capture** (`process_image`) | User taps "Capture" | Nothing | ~500–1500 ms |
+| **Live Frame** (`process_live_frame`) | Continuous camera viewfinder loop | LLM Correction, Speech Synthesis | **< 200 ms** |
+| **Full Capture** (`process_image`) | Tap "Capture" or gallery upload | None (Full Pipeline) | **~500–1200 ms** |
 
 ---
 
-### Step 1: Image Preprocessing (`core/preprocess.py`)
+### Step 1: Image Preprocessing
+The `ImagePreprocessor` (`core/preprocess.py`) normalizes raw images into clean, detector-friendly grayscale arrays:
+* **Quality Guard:** Measures average brightness and Laplacian blur to give the user real-time positioning feedback ("Hold steady", "Move to brighter area").
+* **CLAHE Contrast Adjustment:** Recovers subtle dot contours under low-contrast, mixed light.
+* **Morphological Shadow Removal:** Dynamically estimates cast background lighting gradients using dilation, dividing the foreground by it to eliminate shadows.
+* **Perspective Correction:** Runs Canny edge detection, extracts the largest 4-corner contour, and warps the skew into a flat top-down grid view.
+* **Auto-Side Mirroring:** Measures Laplacian variance to detect if the sheet's front (embossed dots) or back (indented holes) is scanned, automatically flipping back-view images.
 
-The `ImagePreprocessor` normalizes raw camera images into a clean, detector-friendly grayscale map through a 9-step pipeline:
+### Step 2: Hybrid Dot Detection
+The `HybridBrailleDetector` (`core/detector.py`) fuses two algorithms for maximum dot recall:
+* **OpenCV SimpleBlobDetector (Fast Path):** Tuned parameters filter keypoints by area, circularity, convexity, and inertia.
+* **YOLOv8 Nano (Deep Path):** Evaluates challenging lighting conditions and maps box outputs to original coordinates.
+* **NMS Fusion:** Blends both feeds with confidence-weighted Non-Maximum Suppression to deduplicate adjacent coordinates.
 
-| # | Step | What it does | Why it matters |
-|:--|:-----|:-------------|:---------------|
-| 1 | **Load Image** | Accepts `bytes`, `ndarray`, or file path | Flexible input from HTTP multipart |
-| 2 | **Quality Assessment** | Measures brightness + Laplacian blur score | Generates real-time camera guidance ("Hold steady", "Move to brighter area") |
-| 3 | **Grayscale** | BGR → single-channel | Reduces compute; Braille is monochrome |
-| 4 | **CLAHE** | Contrast Limited Adaptive Histogram Equalization (clip=3.0, tile=8×8) | Recovers dot contrast under uneven lighting |
-| 5 | **Shadow Removal** | Morphological dilation + per-pixel normalization (`img / background × 255`) | Eliminates cast shadows from fingers, edges, and ambient lighting gradients |
-| 6 | **Gaussian Denoising** | 3×3 kernel smoothing | Reduces sensor noise before blob detection |
-| 7 | **Perspective Correction** | Canny edge → largest 4-corner contour → `warpPerspective` | Corrects angled shots so dot grids align horizontally |
-| 8 | **Side Detection** | Laplacian variance analysis across 32×32 windows | Distinguishes front (indentations) from back (raised bumps) |
-| 9 | **Mirror if Back** | `cv2.flip(img, 1)` if `side == "back"` | Restores correct reading orientation for back-view images |
+### Step 3: Cell Segmentation
+The `BrailleCellSegmenter` (`core/segmenter.py`) groups coordinate lists into 6-slot cells:
+* **DBSCAN Clustering:** Clusters rows of dots by Y-coordinates to estimate page tilt.
+* **Median Spacing Scale:** Computes dynamic spacing dimensions horizontally and vertically.
+* **natural Reading Order:** Groups dots into cells and sorts them left-to-right, top-to-bottom.
+* **Sanity Gate:** Automatically drops specks and fills missing dot coordinates with zeros.
 
-**Output**: A normalized grayscale `ndarray` + quality metadata + camera guidance string.
+### Step 4: Cell Classification
+Segmented cell crops are routed to `CellClassifier` (`ai/models/cell_classifier.py`):
+* **EfficientNet-B3 Backbone:** Cropped cell images are fed directly to a custom classifier trained on **300K+ images** (achieving **96.82% validation accuracy**).
+* **TorchScript Execution:** Runs fast inference on CPU or CUDA via compiled TorchScript serialization (`braille_scripted.pt`).
+* **Space Cell Bypass:** Instantly flags blank background cells (dot count of 0) as spaces (`" "`), bypassing neural forward passes entirely to avoid false predictions and preserve word boundaries.
 
----
+### Step 5: Braille Decoding
+The `BrailleDecoder` (`core/decoder.py`) resolves character mappings:
+* **Modifier States:** Handles capital indicators (`[CAP]`) and numeric indicators (`[NUM]`) to toggle output registers (mapping `a`-`j` to digits `1`-`0`).
+* **Grade 2 Contractions:** Translates whole-word contractions (like `and`, `the`, `with`) and affixes (`sh`, `th`, `ou`, `er`) in their standalone or word contexts.
+* **Hamming Fallback:** Falls back to exact or fuzzy Hamming-distance dot pattern lookups if neural predictions are below confidence thresholds (`0.55`).
 
-### Step 2: Hybrid Dot Detection (`core/detector.py`)
+### Step 6: AI Error Correction
+The `AIErrorCorrector` (`core/corrector.py`) runs a two-tier cascade:
+* **Tier 1 (Groq Llama-3.1):** Passes decoded text and recent context through Groq with a custom, Braille-aware error prompt to fix letter swaps (e.g., `i` ↔ `e`) and run-on words.
+* **Tier 2 (pyspellchecker):** Offline word-by-word spelling correction backup if Groq is unavailable.
+* **MD5 Cache:** Hash-caches corrections to bypass API network calls on repeated scans.
 
-The `HybridBrailleDetector` fuses two complementary algorithms to maximize dot recall:
+### Step 7: Multi-Language Translation
+The `BrailleTranslator` (`core/translator.py`) supports instant translations into **6 languages** (English, Hindi, Tamil, Spanish, French, German) using `deep-translator`. All responses are cached by MD5 hashes.
 
-#### 2a. OpenCV SimpleBlobDetector (Fast Path)
-- Tuned parameters for real embossed Braille geometry:
-  - **Area**: 8–2500 px² (accounts for scale variation)
-  - **Circularity**: ≥ 0.30 (dots aren't perfect circles due to shadows)
-  - **Convexity**: ≥ 0.50 (relaxed for real-world dots)
-  - **Inertia**: ≥ 0.20 (allows slightly elliptical dots from side-lighting)
-- Applies **adaptive Gaussian thresholding** before blob search to handle absolute brightness differences
-- Falls back to inverted image if no blobs found (for back-lit or high-contrast setups)
-- **Confidence** is estimated from how uniformly sized all detected dots are — uniform dot sizes → higher confidence
-
-#### 2b. YOLOv8 Nano (Deep Path)
-- Loads a fine-tuned `yolov8n.pt` (or pretrained as fallback)
-- Resizes images to 640×640 for inference, then **maps detections back to original coordinates**
-- Confidence threshold: 0.30
-- Performs a warmup pass on startup to eliminate first-call latency
-
-#### 2c. Confidence-Weighted NMS Fusion
-Both detector outputs are merged with **spatial Non-Maximum Suppression (NMS)**:
-
-```
-If YOLOv8 avg_conf > 0.5:  YOLO weight = 70%,  Blob weight = 30%  [yolo_dominant]
-Else:                       YOLO weight = 40%,  Blob weight = 60%  [blob_dominant]
-```
-
-Dots within 12px of each other are merged into a single centroid using **confidence-weighted position averaging**. This produces the final deduplicated dot list with quality labels: `good`, `low`, or `poor`.
-
----
-
-### Step 3: Cell Segmentation (`core/segmenter.py`)
-
-The `BrailleCellSegmenter` converts the flat dot list into ordered 6-dot Braille cells using **DBSCAN spatial clustering** — this is the key innovation that makes the system robust to camera scale, tilt, and any paper size:
-
-1. **Cluster rows** of dots using DBSCAN on Y-coordinates
-2. **Estimate dot spacing** from median horizontal and vertical gaps
-3. **Group dots into 6-slot cells** by aligning each dot to the nearest expected `(col, row_in_cell)` position
-4. **Sort cells** in natural reading order (left-to-right, top-to-bottom)
-5. **Fill missing dots** with zeros if a dot position has no detection
-
-This approach works without any fixed grid assumption, adapting dynamically to the camera distance and angle.
-
----
-
-### Step 4: Braille Decoding (`core/decoder.py`)
-
-The `BrailleDecoder` translates 6-element binary patterns `(dot1, dot2, dot3, dot4, dot5, dot6)` into text through a multi-stage lookup:
-
-```
-Dot layout:
-  dot1  dot4
-  dot2  dot5
-  dot3  dot6
-```
-
-#### Decode Priority Chain
-
-| Priority | Lookup | Covers |
-|:---------|:-------|:-------|
-| 1 | **Grade 1 exact match** | a–z, punctuation, indicators (`[CAP]`, `[NUM]`) |
-| 2 | **Number Mode** | Digits 0–9 (same patterns as a–j, active after `[NUM]` indicator) |
-| 3 | **Grade 2 whole-word contractions** | `and`, `for`, `of`, `with` (only when cell is standalone in a word) |
-| 4 | **Grade 2 affixes** | `sh`, `th`, `wh`, `er`, `ou`, `en`, `in`, `st`, `ar` |
-| 5 | **Fuzzy Hamming match** | Closest Grade 1 entry within 1–2 dot error distance |
-| 6 | **Unknown** | Returns `?` with confidence 0.0 |
-
-#### Capitalization Rules
-- Cell `(0,0,0,0,0,1)` → `[CAP]` indicator → next letter is uppercase
-- `capitalize_next` flag resets after each uppercase character
-
-#### Confidence Scoring
-| Match Type | Confidence |
-|:-----------|:-----------|
-| Exact Grade 1 / Grade 2 | 1.0 |
-| Fuzzy (1 dot error) | 0.75 |
-| Fuzzy (2 dot errors) | 0.50 |
-| Unresolvable | 0.0 |
-
-Average confidence across all cells generates quality labels: `excellent` (≥0.85), `good` (≥0.65), `fair` (≥0.45), `poor` (<0.45).
-
----
-
-### Step 5: AI Error Correction (`core/corrector.py`)
-
-The `AIErrorCorrector` fixes OCR-style errors in decoded text using a **two-tier cascade**:
-
-#### Tier 1: Groq Llama-3.1-8b-instant (Primary)
-- Uses a **Braille-aware system prompt** that explains common dot detection failure modes (missing letters, swapped patterns like `i` ↔ `e`, `h` ↔ `b`)
-- Sends context from the sliding window memory for better semantic correction
-- Results are **memoized by MD5 hash** to avoid duplicate API calls
-- Temperature: 0.1 (deterministic corrections)
-- Falls through to Tier 2 on API failure
-
-#### Tier 2: pyspellchecker (Offline Fallback)
-- Word-by-word correction preserving punctuation and original capitalization
-- Works entirely offline with no external dependencies
-
-#### Word-Level Diff
-`get_diff()` computes a `difflib.SequenceMatcher` diff between original and corrected text and returns a structured list of changes for frontend display.
-
----
-
-### Step 6: Multi-Language Translation (`core/translator.py`)
-
-The `BrailleTranslator` supports **6 languages** via Google Translate (deep-translator):
-
-| Language | Code | TTS Voice |
-|:---------|:-----|:----------|
-| English | `en` | `en-US-JennyNeural` |
-| Hindi | `hi` | `hi-IN-SwaraNeural` |
-| Tamil | `ta` | `ta-IN-PallaviNeural` |
-| Spanish | `es` | `es-ES-ElviraNeural` |
-| French | `fr` | `fr-FR-DeniseNeural` |
-| German | `de` | `de-DE-KatjaNeural` |
-
-All translations are **cached by MD5 hash** to avoid redundant network calls. English-to-English passes through instantly without any API call.
-
----
-
-### Step 7: Neural Speech Synthesis (`core/tts_engine.py`)
-
-The `BrailleTTSEngine` generates natural-sounding speech using **Microsoft Edge TTS** (neural voices):
-
-- Generates audio as raw `bytes` for in-memory streaming
-- Can also **save MP3 files** to `./data/` for persistence and caching
-- Each language maps to its own neural voice (see table above)
-- Falls back gracefully if `edge-tts` is unavailable
-
----
-
-### Step 8: Context Memory (`ai/context_memory.py`)
-
-The `ContextMemory` module maintains a **sliding window of recently decoded sentences**:
-
-- Stores the last N sentences as context
-- Provides a `get_correction_context()` string for the LLM corrector
-- Improves correction accuracy by giving the LLM semantic continuity across multiple scans of the same Braille page
+### Step 8: Neural Speech Synthesis
+The `BrailleTTSEngine` (`core/tts_engine.py`) synthesizes natural-sounding speech using Microsoft Edge Neural TTS voices, generating base64 MP3 streams on-the-fly and caching files in `/data/`.
 
 ---
 
 ## 🌟 Key Features
 
-### Core Vision
-- **Hybrid Dot Detection**: YOLOv8 Nano + OpenCV SimpleBlobDetector fused via confidence-weighted NMS — maximizes recall under any lighting
-- **Adaptive Cell Segmentation**: DBSCAN-based clustering adapts to any camera scale, tilt, or paper size — no fixed grid required
-- **Dual-Grade Braille Decoding**: Full Grade 1 (alphabet, punctuation, numbers) and Grade 2 (contractions and affixes) with proper indicator handling
-- **Fuzzy Hamming Correction**: Tolerates 1–2 dot detection errors before falling to "unknown" — gracefully handles partial occlusions
-
-### AI & Language
-- **Two-Tier Error Correction**: Groq Llama-3.1 (primary) → pyspellchecker (offline fallback) — works with or without internet
-- **6-Language Translation**: Google Translate via deep-translator with result caching
-- **Neural TTS in 6 Languages**: Microsoft Edge neural voices, each matched to its own language
-- **Sliding Context Memory**: The LLM corrector receives recent scan history for better semantic continuity
-
-### Camera & Guidance
-- **Live Frame Mode**: Sub-200ms preprocessing → detection → segmentation → decode for real-time viewfinder overlays
-- **Smart Camera Guidance**: Real-time voice cues — *"Hold camera steady"*, *"Move to brighter area"*, *"Good positioning — scanning ✅"*
-- **Side Detection**: Automatically detects front (indentation) vs. back (raised) of the Braille page and corrects orientation
-- **Perspective Correction**: Auto-warps angled shots to a flat top-down view using 4-corner homography
-
-### Mobile App
-- **Live Scanner**: Continuous camera feed with SVG dot overlay and real-time guidance banner
-- **Photo Upload**: Pick any image from the gallery for full-pipeline processing
-- **Scan History**: Paginated log of all past scans with text, confidence, language, and audio
-- **Settings**: Language selection, TTS toggle, high-contrast mode, developer debug info
-- **5-Step Voice Onboarding**: Fully narrated introduction for new users with screen-reader support
-- **Zustand State Management**: Centralized, reactive store for scan cache, settings, and theme
-- **Focused Camera Lifecycle**: Unmounts the viewfinder and releases the hardware camera/torch immediately upon tab blur to prevent lock conflicts with Image/Document Pickers
-- **Atomic State Hooks**: Integrates `useAppStore.getState()` for stable and fresh Zustand operations inside callbacks, solving stale closure lag in live frame intervals
-
-### Accessibility
-- **Screen Reader Support**: Every element has `accessibilityLabel`, `accessibilityRole`, and `accessibilityState`
-- **High-Contrast Theme**: Custom HSL color system with extreme high-contrast toggle
-- **Full Voice Control**: App reads all feedback, guidance, and decoded text aloud
-- **Jarvis-style Scan Animation**: Animated scanning line and HUD indicators for tactile feedback
+* **Real-Time Visual Overlay:** Viewer displays dynamic SVG bounding boxes with color-coded confidence levels mapping cells in the viewport.
+* **Smart Audio Guidance:** Live verbal cues navigate blind users to place their cameras optimally.
+* **On-Device Onboarding:** 5-step interactive voice onboarding introduces the application's physical buttons.
+* **Zero-Conflict Camera Lifecycle:** Unmounts and releases active camera feeds immediately upon tab blurring to allow gallery uploads without thread lockups.
+* **High Contrast Design:** Sleek HSL theme with a togglable high-contrast palette for visually impaired users.
+* **Robust Offline Backup:** Handles scanning, decoding, spelling correction, and text-to-speech without active internet.
 
 ---
 
 ## 🛠️ Tech Stack
 
-### Backend
-| Technology | Version | Role |
-|:-----------|:--------|:-----|
-| **Python** | 3.12+ | Runtime |
-| **FastAPI** | 0.111.0 | Async HTTP API framework |
-| **Uvicorn** | 0.29.0 | ASGI server |
-| **OpenCV** | 4.9.0 | Image preprocessing + blob detection |
-| **NumPy** | 1.26.4 | Numerical operations |
-| **Ultralytics (YOLOv8)** | 8.2.0 | Deep learning dot detector |
-| **PyTorch** | 2.3.0 | YOLOv8 inference backend |
-| **scikit-learn** | 1.4.2 | DBSCAN clustering |
-| **SciPy** | 1.13.0 | Spatial distance computations |
-| **edge-tts** | 7.2.8 | Microsoft neural TTS generation |
-| **deep-translator** | 1.11.4 | Google Translate wrapper |
-| **openai** | 1.30.0 | Groq API client (OpenAI-compatible) |
-| **pyspellchecker** | 0.8.1 | Offline spell correction fallback |
-| **SQLAlchemy** | 2.0.30 | Async ORM for scan history |
-| **aiosqlite** | 0.20.0 | Async SQLite driver |
-| **albumentations** | 1.4.6 | Synthetic training augmentation |
-| **python-dotenv** | 1.0.1 | Environment variable loading |
-| **pytest + httpx** | 8.2.0 / 0.27.0 | Test suite |
+### Backend API Server
+* **Python 3.12+** / **FastAPI** / **Uvicorn** — Async web framework and server
+* **OpenCV (cv2)** — Image preprocessing and CLAHE shadows morphological logic
+* **Ultralytics (YOLOv8)** & **PyTorch** — Deep learning dot detection engine
+* **scikit-learn (DBSCAN)** — Spatial cell clustering logic
+* **edge-tts** — High-fidelity Microsoft Edge neural TTS synthesizer
+* **deep-translator** — Google Translate client integration
+* **SQLAlchemy** & **aiosqlite** — Async database layer for scanning history logs
 
-### Mobile
-| Technology | Version | Role |
-|:-----------|:--------|:-----|
-| **React Native** | 0.85.3 | Cross-platform mobile UI |
-| **Expo SDK** | 56 | Development environment + managed workflow |
-| **TypeScript** | 6.0.3 | Type safety |
-| **Expo Router** | 56.2.5 | File-system based navigation |
-| **expo-camera** | 56.0.7 | Live camera frame capture |
-| **expo-av** | 16.0.8 | Audio playback for neural TTS |
-| **expo-speech** | 56.0.3 | Native TTS fallback |
-| **react-native-svg** | 15.15.4 | Dot overlay SVG graphics |
-| **react-native-reanimated** | 4.3.1 | Smooth micro-animations |
-| **zustand** | 5.0.13 | Lightweight state management |
-| **lucide-react-native** | 1.16.0 | Icon library |
+### Mobile Client App
+* **React Native** & **Expo SDK 56** — Cross-platform physical mobile UI
+* **expo-camera** — Viewfinder frame processor client
+* **expo-av** — Audio engine for neural TTS persistent stream playback
+* **expo-speech** — Offline native TTS fallback synthesis
+* **react-native-reanimated** — Micro-animations for high-contrast interface elements
+* **zustand** — Global application store and scan history cache
+* **lucide-react-native** — Clean, high-contrast visual icon sets
 
 ---
 
 ## 📂 Codebase Layout
 
-The project comprises **42 fully implemented source files** across two apps:
-
 ```
 BrailleVision AI/
 │
-├── backend/                          # Python FastAPI backend (42 files)
-│   ├── main.py                       # FastAPI entrypoint — wires lifecycles, CORS, routers
-│   ├── requirements.txt              # All pinned Python dependencies
-│   ├── .env / .env.example           # Environment variables (API keys, DB URL, model path)
-│   ├── braillevision.db              # Auto-created SQLite database
+├── Dataset & Training/               # Model training resources & datasets
+│   ├── Braille-Text.ipynb            # Jupyter notebook used to train the EfficientNet-B3 classifier
+│   ├── Test-model.py                 # Evaluation script for character predictions
+│   ├── clean_dataset.tar             # Packaged cell images dataset (300K+ augmented)
+│   └── dataset_info.md               # Curated dataset classes, taxonomy & split reports
+│
+├── models/                           # Saved neural network model weights
+│   ├── best_model.pth                # PyTorch checkpoint for EfficientNet-B3
+│   ├── braille_scripted.pt           # TorchScript compiled model for fast classifier inference
+│   ├── class_map.json                # Index-to-char mapping for the 46 Braille classes
+│   └── yolov8n.pt                    # Pretrained YOLOv8 Nano weights for dot detection
+│
+├── backend/                          # Python FastAPI backend
+│   ├── main.py                       # FastAPI application entrypoint and startup warmups
+│   ├── requirements.txt              # Backend library dependencies
+│   ├── .env / .env.example           # Environment configurations (Groq API, DB URL, paths)
+│   ├── braillevision.db              # SQLite scan history database
 │   │
-│   ├── ai/                           # Master pipeline & memory
-│   │   ├── pipeline.py               # BrailleAIPipeline — orchestrates all 8 modules
-│   │   └── context_memory.py         # Sliding sentence window for LLM context
+│   ├── ai/                           # AI pipeline orchestration & sliding window context
+│   │   ├── pipeline.py               # BrailleAIPipeline - orchestrates the 8 core modules
+│   │   └── context_memory.py         # ContextMemory sliding window for sentence correction
 │   │
 │   ├── core/                         # Core CV, detection, and decoding engines
-│   │   ├── preprocess.py             # ImagePreprocessor — 9-step image normalization
-│   │   ├── detector.py               # HybridBrailleDetector — YOLOv8 + Blob NMS fusion
-│   │   ├── segmenter.py              # BrailleCellSegmenter — DBSCAN cell clustering
-│   │   ├── decoder.py                # BrailleDecoder — Grade 1 & Grade 2 + fuzzy Hamming
-│   │   ├── corrector.py              # AIErrorCorrector — Groq LLM + pyspellchecker
-│   │   ├── translator.py             # BrailleTranslator — 17-language Google Translate
-│   │   └── tts_engine.py             # BrailleTTSEngine — neural edge-tts audio generation
+│   │   ├── preprocess.py             # ImagePreprocessor - 9-step normalization pipeline
+│   │   ├── detector.py               # HybridBrailleDetector - OpenCV Blob + YOLOv8 NMS fusion
+│   │   ├── segmenter.py              # BrailleCellSegmenter - DBSCAN cell spacing clustering
+│   │   ├── decoder.py                # BrailleDecoder - Grade 1 & 2 lookup and fuzzy Hamming
+│   │   ├── corrector.py              # AIErrorCorrector - Groq Llama-3.1 + pyspellchecker
+│   │   ├── translator.py             # BrailleTranslator - 6-language cached translation
+│   │   └── tts_engine.py             # BrailleTTSEngine - Microsoft Edge Neural Speech
 │   │
-│   ├── database/                     # SQLAlchemy async database layer
-│   │   ├── db.py                     # Async engine + session factory + init_db()
-│   │   └── models.py                 # ScanHistory ORM model
+│   ├── database/                     # SQLite database access layer
+│   │   ├── db.py                     # SQLAlchemy async connection engine
+│   │   └── models.py                 # ScanHistory SQLAlchemy ORM schema model
 │   │
-│   ├── routers/                      # FastAPI HTTP route handlers
-│   │   ├── scan.py                   # POST /api/scan/frame and /api/scan/capture
-│   │   ├── tts.py                    # POST /api/tts/speak
-│   │   ├── translate.py              # POST /api/translate
-│   │   └── history.py                # GET/DELETE /api/history
+│   ├── routers/                      # REST API routing endpoints
+│   │   ├── scan.py                   # /api/scan/frame & /api/scan/capture multipart uploads
+│   │   ├── tts.py                    # /api/tts/speak neural speech endpoint
+│   │   ├── translate.py              # /api/translate multi-language endpoint
+│   │   └── history.py                # /api/history pagination & scan deletion
 │   │
-│   ├── training/                     # Dataset synthesis and model training
-│   │   ├── generate_synthetic.py     # Generates 5000+ synthetic Braille images for YOLOv8
-│   │   ├── train_yolo.py             # Fine-tune YOLOv8 and export to ONNX
-│   │   └── benchmark.py              # Per-condition accuracy benchmark (shadow, blur, etc.)
+│   ├── tests/                        # Comprehensive Pytest test suite
+│   │   ├── test_decoder.py           # Core Grade 1 & 2 character/modifier decoder tests
+│   │   ├── test_repetition_fix.py    # Repetitive pattern detection and segmentation scale retry
+│   │   ├── test_segmenter.py         # Cell segmentation and DBSCAN distance calculations
+│   │   ├── test_sentence_decode.py   # Multi-word space cell bypass and classifier override tests
+│   │   ├── test_single_cell_bypass.py # direct single-cropped square cell classification tests
+│   │   └── test_word_decoding.py     # Clean isolated word-decoding sanity check
 │   │
-│   ├── tests/                        # Pytest test suite
-│   │   └── test_decoder.py           # 23 tests: Grade 1 & 2, capitalization, numbers, fuzzy
-│   │
-│   └── data/                         # Audio asset cache directory (auto-created)
+│   └── data/                         # Audio MP3 cache directory (auto-created)
 │
 └── mobile/                           # React Native Expo 56 mobile app
-    ├── app.json                       # Expo app configuration
-    ├── package.json                   # Node dependencies (Expo SDK 56)
-    ├── tsconfig.json                  # TypeScript configuration
+    ├── app.json                      # Expo application manifest configuration
+    ├── package.json                  # Node dependencies (Expo SDK 56)
+    ├── tsconfig.json                 # TypeScript compiler configuration
     │
-    ├── app/                           # Expo Router file-system routes
-    │   ├── index.tsx                  # Initial launcher — checks onboarding status
-    │   ├── _layout.tsx                # Root Stack navigator + font loading
-    │   ├── onboarding.tsx             # 5-step voice onboarding (fully narrated)
-    │   └── (tabs)/                    # Main tab screens
-    │       ├── _layout.tsx            # Tab navigator with accessibility labels
-    │       ├── scanner.tsx            # 📷 Live Braille scanner with guidance HUD
-    │       ├── upload.tsx             # 🖼️ Photo upload + full pipeline scan
-    │       ├── history.tsx            # 📜 Paginated scan history with audio replay
-    │       └── settings.tsx           # ⚙️ Language, TTS, contrast, debug options
+    ├── app/                          # Expo Router navigation screens
+    │   ├── index.tsx                 # Entry launcher routing based on onboarding status
+    │   ├── _layout.tsx               # Core layout and custom font loader
+    │   ├── onboarding.tsx            # Narrated voice-guided onboarding workflow
+    │   └── (tabs)/                   # Application bottom tabs
+    │       ├── _layout.tsx           # Tab bar with screen reader announcements
+    │       ├── scanner.tsx           # Futuristic camera view with SVG overlay and voice guidance
+    │       ├── upload.tsx            # Gallery photo upload + annotation overlay scanner
+    │       ├── history.tsx           # Paginated scan history with audio replay player
+    │       └── settings.tsx          # Settings screen for language, speech, theme and debug
     │
-    ├── components/                    # Reusable accessible UI components
-    │   ├── BrailleOverlay.tsx         # SVG dot bounding box overlay on camera view
-    │   ├── ConfidenceDisplay.tsx      # Heatmap-colored confidence percentage indicator
-    │   ├── GuidanceBanner.tsx         # Micro-animated voice feedback banner
-    │   ├── ScanAnimation.tsx          # Jarvis-style futuristic scanning line animation
-    │   └── TTSPlayer.tsx              # Full-featured audio player (play/pause/progress)
+    ├── components/                   # Accessible visual components
+    │   ├── BrailleOverlay.tsx        # Dynamic SVG dot and boundary box overlay graphic
+    │   ├── ConfidenceDisplay.tsx     # Color-coded circular scanning confidence gauge
+    │   ├── GuidanceBanner.tsx        # Voice instruction panel with scanning prompts
+    │   ├── ScanAnimation.tsx         # Animated HUD scanning line animation
+    │   └── TTSPlayer.tsx             # Interactive speech controller with progress bar
     │
     ├── store/
-    │   └── useAppStore.ts             # Zustand store (scan cache, settings, language, theme)
+    │   └── useAppStore.ts            # Global Zustand store (scan caches, high contrast, state)
     │
     ├── services/
-    │   ├── api.ts                     # Backend HTTP client (multipart + JSON fetch)
-    │   └── voice.ts                   # Neural TTS audio cache + expo-speech fallback
+    │   ├── api.ts                    # Backend API multipart and JSON communication clients
+    │   ├── voice.ts                  # Neural speech local playback and native fallback controllers
+    │   └── voiceCommands.ts          # Speech-to-text listener for screen-reader controls
     │
     ├── hooks/
-    │   └── useBrailleScanner.ts       # Frame throttle, capture handler, camera lifecycle
+    │   ├── useBrailleScanner.ts      # Camera lifecycle, frame throttling and uploads hook
+    │   └── useVoiceCommands.ts       # Speech triggers and router navigation controls hook
     │
     └── constants/
-        └── theme.ts                   # HSL-based color palette + high-contrast design tokens
+        └── theme.ts                  # HSL color palettes and high contrast theme system
 ```
 
 ---
 
 ## ⚡ Setup & Installation
 
-### Prerequisites
-
-| Requirement | Minimum Version |
-|:-----------|:----------------|
-| Python | 3.12+ |
-| Node.js | 20+ |
-| npm | 10+ |
-| Groq API Key | (Optional — free tier at [console.groq.com](https://console.groq.com)) |
-
----
-
-### 1. Backend Setup
-
+### 1. Backend Server Setup
 ```bash
-# Navigate to backend directory
+# Navigate to backend folder
 cd backend
 
-# Create and activate virtual environment
+# Initialize and activate Python virtual environment
 python -m venv venv
+venv\Scripts\activate      # Windows
+source venv/bin/activate   # macOS / Linux
 
-# Windows
-venv\Scripts\activate
-
-# macOS / Linux
-source venv/bin/activate
-
-# Install all dependencies
+# Install required dependencies
 pip install -r requirements.txt
 
-# Copy environment config and fill in your values
-copy .env.example .env      # Windows
-cp .env.example .env        # macOS/Linux
+# Copy the configuration environment file
+copy .env.example .env     # Windows
+cp .env.example .env       # macOS / Linux
 
-# Start the backend server (auto-reloads on code changes)
+# Start the uvicorn API server
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-> **First startup**: The backend automatically:
-> 1. Creates `braillevision.db` (SQLite) with the ScanHistory schema
-> 2. Downloads YOLOv8 nano weights (`yolov8n.pt`) if not already present
-> 3. Runs a warm-up pass through YOLOv8 to eliminate first-request latency
-> 4. Creates the `./data/` directory for audio file caching
-
-The API will be live at `http://localhost:8000` and the interactive docs at `http://localhost:8000/docs`.
+> [!TIP]
+> On the first startup, the backend server will automatically:
+> 1. Initialize `braillevision.db` SQLite schema.
+> 2. Download and save baseline `yolov8n.pt` weights.
+> 3. Perform model warm-ups to eliminate subsequent request latency.
 
 ---
 
 ### 2. Mobile App Setup
-
 ```bash
-# Navigate to mobile directory
+# Navigate to mobile app folder
 cd mobile
 
-# Install dependencies (legacy-peer-deps required for React 19 packages)
+# Install Node dependencies
 npm install --legacy-peer-deps
 
-# Start the Expo dev server
-npm run start
+# Start the local Expo server
+npm start
 ```
 
 Then:
-- Press **`a`** — launch on Android emulator
-- Press **`i`** — launch on iOS simulator
-- **Scan the QR code** — run on a physical device via Expo Go
+* Press **`a`** — launch on the Android emulator
+* Press **`i`** — launch on the iOS simulator
+* **Run on a physical device:** Build a custom native development client (`npx expo run:android` or `npx expo run:ios`).
+  > To deliver real-time camera processing and native speech synthesis, this application runs as a production-grade custom **Development Build** rather than a sandboxed playground. This allows direct, high-performance access to the device's physical camera and audio hardware.
 
-> **Connect to backend**: Open `mobile/services/api.ts` and update the `BASE_URL` constant to point to your machine's local IP address (e.g., `http://192.168.1.100:8000`). Do **not** use `localhost` on a physical device.
+> [!WARNING]
+> **Network Binding:** Open `mobile/services/api.ts` and set `BASE_URL` to your computer's local IP address (e.g., `http://192.168.1.104:8000`) instead of `localhost` so physical devices can communicate with the backend.
 
 ---
 
 ## 🔧 Environment Configuration
 
-Copy `.env.example` to `.env` in the `backend/` directory and configure:
+Customize settings in `backend/.env` to control parameters:
 
 ```env
-# Groq LLM API Key (optional — enables AI error correction)
-# Get a free key at https://console.groq.com
+# Groq API configuration (Free tier key enables high-context Llama error fixes)
 GROQ_API_KEY=your_groq_api_key_here
-
-# LLM model selection (llama-3.1-8b-instant is free and fast)
 GROQ_MODEL=llama-3.1-8b-instant
 
-# SQLite database connection string
+# Database target connection string
 DATABASE_URL=sqlite+aiosqlite:///./braillevision.db
 
-# Path to fine-tuned YOLOv8 model (optional, uses yolov8n.pt if not found)
-MODEL_PATH=./ai/models/braille_yolov8n.pt
+# Path overrides for detection and classification models
+MODEL_PATH=../models/yolov8n.pt
 
-# CORS origins (use * for development, restrict in production)
-CORS_ORIGINS=["*"]
-
-# Debug mode
+# Debug features and file limits
 DEBUG=True
-
-# Maximum image file size in megabytes
 MAX_IMAGE_SIZE_MB=10
-
-# Minimum confidence threshold for dot detection
 CONFIDENCE_THRESHOLD=0.35
 ```
 
@@ -556,335 +389,68 @@ CONFIDENCE_THRESHOLD=0.35
 
 ## 📡 API Reference
 
-All endpoints are documented interactively at **`http://localhost:8000/docs`** (Swagger UI).
+All routes are fully documented via interactive Swagger UI at **`http://localhost:8000/docs`**.
 
-### Health
+### 1. Health Endpoints
+* **`GET /`** — Welcome message and system state checks.
+* **`GET /health`** — Database read/write verification.
 
-| Endpoint | Method | Description |
-|:---------|:------:|:------------|
-| `/` | `GET` | Welcome message + service status |
-| `/health` | `GET` | Database connectivity health check |
+### 2. Scanning Actions
+#### **`POST /api/scan/frame`**
+Optimized live-scanning viewport path.
+* **Body:** `multipart/form-data` with `file` (JPEG capture bytes).
+* **Bypasses:** Semantic error correction and TTS synthesis to meet <200ms latency budgets.
 
----
+#### **`POST /api/scan/capture`**
+Full pipeline capture path.
+* **Body:** `multipart/form-data` with `file` + optional JSON config.
+* **Payload Structure:**
+  ```json
+  {
+    "correct": true,
+    "translate_to": "hi",
+    "speak": true,
+    "save_annotated": true
+  }
+  ```
+* **Output Structure:** Includes raw text, LLM corrected text, translations, per-cell confidence arrays, base64 annotated JPEGs, and synthesized MP3 audio tracks.
 
-### Scan
-
-#### `POST /api/scan/frame`
-**Live frame scanning** — optimized fast path for real-time camera overlays.
-
-- **Request**: `multipart/form-data` with `file` (JPEG frame bytes)
-- **Skips**: Error correction, TTS generation
-- **Target**: < 200ms end-to-end
-
-**Response:**
-```json
-{
-  "success": true,
-  "raw_text": "hello",
-  "corrected_text": "hello",
-  "dots": [{"x": 120.0, "y": 84.5, "size": 10.0, "confidence": 0.85, "source": "yolo"}],
-  "cell_count": 5,
-  "dot_count": 18,
-  "avg_confidence": 0.87,
-  "guidance": "Good positioning — scanning ✅",
-  "side_detected": "front",
-  "detection_quality": "good",
-  "processing_time_ms": 143.2,
-  "error": null
-}
-```
-
----
-
-#### `POST /api/scan/capture`
-**Full capture scan** — complete pipeline with correction, translation, TTS, and database storage.
-
-- **Request**: `multipart/form-data` with `file` + optional JSON options:
-
-```json
-{
-  "correct": true,
-  "translate_to": "hi",
-  "speak": true,
-  "save_annotated": true
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "raw_text": "helo wrold",
-  "corrected_text": "hello world",
-  "translated_text": "नमस्ते दुनिया",
-  "cells": [{"pattern": [1,0,0,0,0,0], "confidence": 1.0, "x": 80.0, "y": 60.0, "bbox": [...], "dot_count": 1}],
-  "confidences": [1.0, 0.75, ...],
-  "avg_confidence": 0.91,
-  "cell_count": 10,
-  "dot_count": 34,
-  "guidance": "Good positioning — scanning ✅",
-  "side_detected": "front",
-  "quality": {"brightness": 148.2, "blur_score": 243.1, "lighting": "good", "blur": "sharp", "ok": true},
-  "detection_quality": "good",
-  "correction_method": "llm",
-  "correction_changes": [{"original": "helo", "corrected": "hello", "position": 0, "type": "replace"}],
-  "was_corrected": true,
-  "annotated_image_base64": "...(base64 JPEG)...",
-  "audio_bytes": "...(base64 MP3)...",
-  "processing_time_ms": 892.4,
-  "error": null
-}
-```
-
----
-
-### Text-to-Speech
-
-#### `POST /api/tts/speak`
-Generate neural TTS audio from text.
-
-**Request:**
-```json
-{
-  "text": "Hello world",
-  "lang": "en"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "audio_base64": "//NExAAA...",
-  "lang": "en",
-  "voice": "en-US-JennyNeural"
-}
-```
-
----
-
-### Translation
-
-#### `POST /api/translate`
-Translate decoded Braille text to any supported language.
-
-**Request:**
-```json
-{
-  "text": "Hello world",
-  "target_lang": "hi"
-}
-```
-
-**Response:**
-```json
-{
-  "original": "Hello world",
-  "translated": "नमस्ते दुनिया",
-  "target_language": "hi",
-  "language_name": "Hindi",
-  "success": true
-}
-```
-
----
-
-### History
-
-| Endpoint | Method | Parameters | Description |
-|:---------|:------:|:-----------|:------------|
-| `/api/history` | `GET` | `?page=1&size=20` | Paginated scan history |
-| `/api/history/stats` | `GET` | — | Word counts, accuracy averages, today's scan count |
-| `/api/history/{id}` | `DELETE` | `id` (path) | Delete a specific scan record |
-
----
-
-## 📱 Mobile App Screens
-
-### 1. Scanner Tab (`app/(tabs)/scanner.tsx`)
-- Continuous live camera feed via `expo-camera` with a **focused-only active lifecycle** (unmounts the camera automatically on tab blur to release hardware resources and turn off the flash)
-- **SVG dot overlay** (`BrailleOverlay.tsx`) draws detected dot positions in real-time
-- **Guidance banner** (`GuidanceBanner.tsx`) shows animated voice cues
-- **Confidence display** (`ConfidenceDisplay.tsx`) heatmap indicator
-- **Jarvis-style scan animation** (`ScanAnimation.tsx`) sweeps across the frame
-- Tap **"Capture"** to trigger the full pipeline scan
-- Decoded text and audio appear in an expandable result card
-
-### 2. Upload Tab (`app/(tabs)/upload.tsx`)
-- Select photos from the device gallery via `expo-image-picker` or `expo-document-picker`
-- **Zero-conflict uploading flow**: Guaranteed safe document/image picking because active hardware camera streams from the Scanner tab are systematically unmounted and released
-- Supports JPEG, PNG, and PDF formats
-- Runs the full pipeline (preprocessing → detection → decode → correct → translate → TTS)
-- Displays annotated image with detected dot positions overlaid
-
-### 3. History Tab (`app/(tabs)/history.tsx`)
-- Paginated list of all past scans fetched from `/api/history`
-- Each card shows: decoded text, timestamp, confidence score, language, correction status
-- **Audio replay** of previously generated TTS via `TTSPlayer.tsx`
-- Pull-to-refresh and infinite scroll
-- Per-record delete
-
-### 4. Settings Tab (`app/(tabs)/settings.tsx`)
-- **Language**: Select any of 6 supported translation target languages
-- **TTS Toggle**: Enable/disable audio playback
-- **High-Contrast Mode**: Switches to bright yellow/black accessibility palette
-- **Debug Info**: Shows API URL, model status, last scan stats
-- **Clear History**: Wipes all scan records from the database
-
-### 5. Onboarding (`app/onboarding.tsx`)
-- 5-step narrated introduction using `expo-speech`
-- Each step explains a core feature with spoken description
-- Persists completion status so it only shows once
-
----
-
-## 🎯 Training Pipeline
-
-### 1. Generate Synthetic Dataset (`backend/training/generate_synthetic.py`)
-
-Creates **5000+ synthetic Braille page images** for YOLOv8 training:
-- Randomly selects Braille letter patterns and renders them as dot grids
-- Applies augmentations via **Albumentations**:
-  - Random illumination angles and gradients
-  - Cast shadow overlays
-  - Paper texture noise
-  - Perspective distortions
-  - Gaussian blur
-  - Salt-and-pepper noise
-- Exports images + **YOLOv8-format YOLO `.txt` bounding box annotations**
-
-```bash
-cd backend
-python training/generate_synthetic.py
-# Output: backend/data/synthetic_dataset/ (images/ + labels/)
-```
-
-### 2. Fine-Tune YOLOv8 (`backend/training/train_yolo.py`)
-
-Fine-tunes `yolov8n.pt` on the synthetic dataset and exports optimized models:
-
-```bash
-python training/train_yolo.py
-# Output: backend/ai/models/braille_yolov8n.pt
-#         backend/ai/models/braille_yolov8n.onnx
-```
-
-Training parameters are configurable (epochs, batch size, imgsz, device).
-
-### 3. Accuracy Benchmark (`backend/training/benchmark.py`)
-
-Tests detection robustness under simulated adverse conditions:
-
-```bash
-python training/benchmark.py
-```
-
-Generates per-condition accuracy reports for:
-- **Shadow** overlays at varying intensities
-- **Low contrast** (brightness reduction)
-- **Gaussian blur** at multiple sigma values
-- **Salt & pepper noise** at different densities
-- **Perspective tilt** at ±15°, ±30°
-
-### 4. Classification & Character Dataset
-
-To achieve grade-2 English Braille compatibility and class-level accuracy, we self-trained an **EfficientNet-B3** backbone classifier on a highly curated, massive-scale collection:
-* **Cleaned Dataset Version**: 2.0
-* **Total Sample Count**: **304,528 Images** (46 classes)
-  * Real Original physical scans: `21,656` samples (augmented 13× to `281,528`)
-  * Synthetic samples: `23,000` samples
-* **Classifier Accuracy**: **96.82% Validation Accuracy**
-* **Multi-Class Taxonomy**: Lowercase alphabet (`a`–`z`), numeric digits (`0`–`9`), and punctuation/special signs (including capitalized indicator `⠠` and numeric mode indicator `⠼`).
-
-> [!TIP]
-> For a full, itemized breakdown of classes, splits (80% train / 10% val / 10% test), and taxonomy metrics, view the comprehensive [dataset_info.md](file:///d:/Yash/Music/Live%20Project%20&%20Other%20Things/BrailleVision%20Hackathon%202026/BrailleVision%20AI/dataset/dataset_info.md) documentation.
-
----
-
-## 🧪 Testing & Validation
-
-### Run the Full Backend Test Suite
-
-```bash
-cd backend
-python -m pytest tests/ -v
-```
-
-The suite covers **25 comprehensive test cases** across both the Braille decoder and the adaptive DBSCAN cell segmenter:
-
-| Test Category | Tests |
-|:-------------|:------|
-| Single-character Grade 1 decodes (a–z) | 26 |
-| Capitalization indicator (`[CAP]`) | 2 |
-| Number mode indicator (`[NUM]`) + digits 0–9 | 3 |
-| Grade 2 whole-word contractions (`and`, `for`, `of`, `with`) | 4 |
-| Grade 2 affixes (`sh`, `th`, `er`, `ou`, etc.) | 4 |
-| Fuzzy Hamming correction (1–2 dot errors) | 3 |
-| `decode_with_stats()` quality labels | 3 |
-| Empty cell / unknown pattern handling | 2 |
-| Spacing estimation & cell-splitting (`test_segmenter.py`) | 2 |
-
-All 25 tests are guaranteed to pass on a clean install.
-
-### Integration Test (Backend API)
-
-```bash
-cd backend
-python -m pytest tests/ -v
-```
-
-Includes HTTP integration tests via `httpx` for the scan, TTS, translate, and history endpoints.
-
-### Live Smoke Tests
-
-Each core module has a self-contained `if __name__ == "__main__":` smoke test that can be run individually:
-
-```bash
-python backend/core/preprocess.py     # Preprocessing smoke test
-python backend/core/detector.py       # Detector smoke test
-python backend/core/decoder.py        # Decoder smoke test
-python backend/core/corrector.py      # Corrector smoke test
-python backend/core/translator.py     # Translator smoke test
-python backend/ai/pipeline.py         # End-to-end pipeline smoke test
-```
+### 3. Utility Actions
+* **`POST /api/tts/speak`** — Synthesizes input text to base64 audio streams using target voice.
+* **`POST /api/translate`** — Translates input text into 6 supported languages.
+* **`GET /api/history`** — Fetches paginated past scans with search capabilities.
+* **`DELETE /api/history/{id}`** — Removes scan records and associated cached audio.
 
 ---
 
 ## ♿ Accessibility Compliance
 
-BrailleVision AI is built to the highest accessibility standards — it is **itself an assistive technology** and must be usable by people with severe visual impairments:
+BrailleVision AI is designed from the ground up to be **accessible to the blind and visually impaired**:
 
-| Feature | Implementation |
-|:--------|:--------------|
-| **Screen Reader** | Every UI element has `accessibilityLabel`, `accessibilityRole`, `accessibilityHint`, and `accessibilityState` properties |
-| **Real-Time Voice Guidance** | Camera positioning feedback spoken aloud via `expo-speech` on each live frame result |
-| **Full Voice Onboarding** | All 5 onboarding steps narrated — no visual reading required |
-| **High-Contrast Mode** | Custom HSL palette with bright yellow (`#FFFF00`) accent buttons on deep black backgrounds to eliminate glare |
-| **Large Touch Targets** | All interactive elements have minimum 48×48 dp touch areas |
-| **Screen Reader Focus Zones** | Critical regions have `accessible={true}` with combined label + hint descriptions |
-| **No Silent Failures** | All error states emit a spoken error message via TTS |
+* **Screen Reader Hooks:** All components are decorated with semantic `accessibilityLabel`, `accessibilityRole`, and `accessibilityState` details.
+* **Continuous Verbal Cues:** Preprocessing assessment reads feedback prompts (e.g. *"Hold camera steady"* or *"Excellent lighting"*).
+* **Glare Reduction High-Contrast:** Color maps use a distinct black background and `#FFFF00` yellow interactive targets to minimize glare.
+* **Optimized Hit Boxes:** Touch controls enforce a minimum `48x48dp` tactile active size.
+* **Tactile Scan Animation:** Renders visual scan sweeps alongside matching audio alerts for clean feedback.
 
 ---
 
 ## 📊 Performance Targets
 
-| Metric | Target | How achieved |
-|:-------|:-------|:-------------|
-| Live frame latency | < 200 ms | Skips correction and TTS; blob detection is ~5ms |
-| Full capture latency | < 1500 ms | Parallel TTS generation; LLM cached by MD5 |
-| Dot detection recall | > 90% (good lighting) | Hybrid fusion compensates for individual detector failures |
-| Grade 1 decode accuracy | > 95% (good lighting) | Exact lookup + 1-dot fuzzy tolerance |
-| LLM correction API latency | < 500 ms | Groq llama-3.1-8b-instant; MD5 cache |
-| Translation latency | < 300 ms | deep-translator + MD5 hash cache |
-| App startup time | < 3 s | YOLOv8 warm-up at server startup, not on first request |
+| Metric | Target | Core Implementation Approach |
+|:-------|:-------|:-----------------------------|
+| **Live Frame Latency** | **< 200 ms** | Skipping heavy LLM/TTS routines; optimized OpenCV preprocessing |
+| **Full Capture Latency** | **< 1200 ms** | Asynchronous Edge TTS generation & Groq API call caches |
+| **Dot Detection Recall** | **> 92%** | NMS blending of YOLOv8 Nano & SimpleBlobDetector |
+| **Grade 1 Translation Accuracy** | **> 96%** | Exact mappings + fuzzy Hamming distance error recoveries |
+| **Multilingual Translation Latency** | **< 300 ms** | MD5 hashed caches for translated sentences |
+| **Cold Startup Time** | **< 2.5 s** | YOLOv8 warm-ups run on backend server load lifecycles |
 
 ---
 
 ## 📝 License
 
-This project is licensed under the **MIT License** — see the [LICENSE](./mobile/LICENSE) file for details.
-
----
+This project is licensed under the **MIT License** — see the [mobile/LICENSE](./mobile/LICENSE) file for details.
 
 <div align="center">
 
