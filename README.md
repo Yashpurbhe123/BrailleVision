@@ -1,6 +1,9 @@
-# ⭐ BrailleVision AI — Assistive Physical Braille Reader & Translator
-
 <div align="center">
+
+# ⭐ BrailleVision AI
+### Assistive Physical Braille Reader & Translator
+
+<br>
 
 ![BrailleVision AI](https://img.shields.io/badge/BrailleVision-AI-blueviolet?style=for-the-badge&logo=eye&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white)
