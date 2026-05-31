@@ -1,4 +1,4 @@
-# 👁️👁️ BrailleVision AI — Assistive Physical Braille Reader & Translator
+# ⭐ BrailleVision AI — Assistive Physical Braille Reader & Translator
 
 <div align="center">
 
@@ -63,58 +63,63 @@ Unlike simple digital Braille simulators, our custom hardware-focused pipeline i
 * **Double-sided embossing (interlineations)** — distinguishing front-side dots from back-side indentations.
 * **Grade 1 & Grade 2 Braille** standards, including complex multi-cell contractions and affixes.
 
-Decoded text is corrected in real-time by a contextual LLM (Groq Llama-3.1), translated into 6 languages, and read aloud using neural Edge TTS voices — all within a single streamlined scan.
+Decoded text is corrected in real-time by a contextual LLM (Groq Llama-3.1), translated into 6 languages, and read aloud using neural Edge TTS voices — all within a single strea## 🏗️ System Architecture
 
----
+```mermaid
+flowchart TD
+    %% Styling Configuration
+    classDef mobile fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc;
+    classDef server fill:#0f172a,stroke:#0d9488,stroke-width:2px,color:#f8fafc;
+    classDef storage fill:#0f172a,stroke:#8b5cf6,stroke-width:2px,color:#f8fafc;
+    classDef network fill:#0f172a,stroke:#f59e0b,stroke-width:2px,color:#f8fafc;
 
-## 🏗️ System Architecture
+    %% Mobile Client Subgraph
+    subgraph Mobile ["📱 Mobile Client (React Native · Expo SDK 56)"]
+        MC_Cam["📷 expo-camera Viewfinder"]:::mobile
+        MC_SVG["🎨 react-native-svg Dot Overlay"]:::mobile
+        MC_Store["📦 Zustand State Store"]:::mobile
+        MC_TTS["🔊 Native Speech & AV Player"]:::mobile
+    end
 
-```
-                 📱 MOBILE CLIENT (React Native · Expo SDK 56)
-         ┌───────────────────────────────────────────────────────┐
-         │  expo-camera          Live camera frame capture       │
-         │  expo-speech + AV     Native & neural TTS playback    │
-         │  react-native-svg     SVG dot overlay on viewfinder   │
-         │  Zustand store        Centralized state management    │
-         │  Expo Router          File-system based navigation    │
-         └──────────────────────────┬────────────────────────────┘
-                                    │  HTTPS multipart/form-data
-                                    │  (JPEG frames + JSON options)
-                                    ▼
-                 🐍 BACKEND SERVER (FastAPI · Python 3.12)
-         ┌───────────────────────────────────────────────────────┐
-         │                                                       │
-         │  ① ImagePreprocessor   CLAHE → Shadow Removal →       │
-         │                        Perspective Correction →       │
-         │                        Side Detection → Auto-Mirror   │
-         │                                                       │
-         │  ② HybridBrailleDetector                             │
-         │      OpenCV SimpleBlobDetector (Fast CV Path)        │
-         │    + YOLOv8 Nano Inference (Deep AI Path)             │
-         │    → Confidence-Weighted NMS Fusion                   │
-         │                                                       │
-         │  ③ BrailleCellSegmenter  DBSCAN Spatial Clustering   │
-         │                          → Ordered 6-slot Cell Grid  │
-         │                                                       │
-         │  ④ CellClassifier (EfficientNet-B3 Backbone)          │
-         │      Direct 46-class neural character prediction      │
-         │                                                       │
-         │  ⑤ BrailleDecoder   Grade 1 + Grade 2 lookup tables   │
-         │                     + Fuzzy Hamming state-machine     │
-         │                                                       │
-         │  ⑥ AIErrorCorrector  Groq Llama-3.1-8b-instant       │
-         │                      + pyspellchecker (Fallback)      │
-         │                                                       │
-         │  ⑦ BrailleTranslator  deep-translator → 6 Langs       │
-         │                                                       │
-         │  ⑧ BrailleTTSEngine   Microsoft Edge Neural TTS      │
-         │                        → base64 MP3 Audio Bytes       │
-         │                                                       │
-         └──────────────────────────┬────────────────────────────┘
-                                    │  SQLAlchemy Async ORM
-                                    ▼
-                         📂 SQLite DATABASE
-         ┌───────────────────────────────────────────────────────┐
+    %% Network Transport Bridge
+    Bridge["🌐 HTTPS multipart/form-data <br> (JPEG Viewport Frames + Options JSON)"]:::network
+
+    %% Backend Server Subgraph
+    subgraph Backend ["🐍 Backend API Server (FastAPI · Python 3.12)"]
+        BE_Pre["① ImagePreprocessor <br> (CLAHE, Morphological Shadows, Warp)"]:::server
+        BE_Det["② HybridBrailleDetector <br> (YOLOv8 Nano + OpenCV NMS Fusion)"]:::server
+        BE_Seg["③ BrailleCellSegmenter <br> (DBSCAN Spatial Grid Clustering)"]:::server
+        BE_Clf["④ CellClassifier <br> (EfficientNet-B3 Backbone)"]:::server
+        BE_Dec["⑤ BrailleDecoder <br> (Grade 1 & 2 + Fuzzy Hamming)"]:::server
+        BE_Corr["⑥ AIErrorCorrector <br> (Groq Llama-3.1 + Spellcheck Cascade)"]:::server
+        BE_Trans["⑦ BrailleTranslator <br> (6-Language cached deep-translator)"]:::server
+        BE_TTS["⑧ BrailleTTSEngine <br> (Edge Neural TTS voice mapping)"]:::server
+    end
+
+    %% Persistence & Cache Layer Subgraph
+    subgraph Storage ["📂 Persistence & Cache Layer"]
+        DB_SQLite["🗄️ aiosqlite Database <br> (ScanHistory ORM Logs)"]:::storage
+        FS_Audio["🎵 Audio Persistent Cache <br> (MP3 Asset Files)"]:::storage
+    end
+
+    %% Flow Assertions
+    MC_Cam -->|Frame Captures| Bridge
+    Bridge -->|REST POST Request| BE_Pre
+    BE_Pre --> BE_Det
+    BE_Det --> BE_Seg
+    BE_Seg --> BE_Clf
+    BE_Clf --> BE_Dec
+    BE_Dec --> BE_Corr
+    BE_Corr --> BE_Trans
+    BE_Trans --> BE_TTS
+    
+    %% Storage Operations
+    BE_TTS -.->|Save / Load MP3s| FS_Audio
+    BE_Dec -.->|Write Scan Logs| DB_SQLite
+    
+    %% Response Cycle
+    BE_TTS -->|Base64 MP3 + Decoded JSON| MC_TTS
+```��──────────────────────────────────┐
          │  braillevision.db   ScanHistory table schema          │
          │  ./data/            Audio MP3 file persistent cache   │
          └───────────────────────────────────────────────────────┘
