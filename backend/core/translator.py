@@ -16,23 +16,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 SUPPORTED_LANGUAGES: dict[str, str] = {
+    "English": "en",
     "Hindi": "hi",
     "Tamil": "ta",
-    "Marathi": "mr",
-    "Telugu": "te",
-    "Kannada": "kn",
-    "Bengali": "bn",
-    "Gujarati": "gu",
-    "Punjabi": "pa",
     "Spanish": "es",
     "French": "fr",
     "German": "de",
-    "Arabic": "ar",
-    "Japanese": "ja",
-    "Chinese (Simplified)": "zh-CN",
-    "Portuguese": "pt",
-    "Russian": "ru",
-    "English": "en",
 }
 
 # Inverse mapping: code → name
@@ -43,20 +32,9 @@ TTS_VOICE_MAP: dict[str, str] = {
     "en": "en-US-JennyNeural",
     "hi": "hi-IN-SwaraNeural",
     "ta": "ta-IN-PallaviNeural",
-    "mr": "mr-IN-AarohiNeural",
-    "te": "te-IN-MohanNeural",
-    "kn": "kn-IN-SapnaNeural",
-    "bn": "bn-IN-TanishaaNeural",
-    "gu": "gu-IN-DhwaniNeural",
-    "pa": "pa-IN-OjasvNeural",
     "es": "es-ES-ElviraNeural",
     "fr": "fr-FR-DeniseNeural",
     "de": "de-DE-KatjaNeural",
-    "ar": "ar-SA-ZariyahNeural",
-    "ja": "ja-JP-NanamiNeural",
-    "zh-CN": "zh-CN-XiaoxiaoNeural",
-    "pt": "pt-BR-FranciscaNeural",
-    "ru": "ru-RU-SvetlanaNeural",
 }
 
 

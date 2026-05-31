@@ -55,7 +55,7 @@ Unlike simple digital Braille converters, this system handles:
 - **Front and back** of the Braille page (raised vs. indented dots)
 - **Grade 1 and Grade 2** standard Braille (including full contraction sets)
 
-The decoded Braille text is then optionally corrected by an LLM (Groq Llama-3.1), translated into 17 languages, and read aloud using Microsoft Edge Neural TTS — all within a single scan.
+The decoded Braille text is then optionally corrected by an LLM (Groq Llama-3.1), translated into 6 languages, and read aloud using Microsoft Edge Neural TTS — all within a single scan.
 
 ---
 
@@ -94,7 +94,7 @@ The decoded Braille text is then optionally corrected by an LLM (Groq Llama-3.1)
          │  ⑤ AIErrorCorrector  Groq Llama-3.1 (primary)       │
          │                      + pyspellchecker (fallback)     │
          │                                                       │
-         │  ⑥ BrailleTranslator  Google Translate → 17 langs   │
+         │  ⑥ BrailleTranslator  Google Translate → 6 langs    │
          │                                                       │
          │  ⑦ BrailleTTSEngine   Microsoft edge-tts neural      │
          │                        voices → base64 MP3 bytes     │
@@ -250,27 +250,16 @@ The `AIErrorCorrector` fixes OCR-style errors in decoded text using a **two-tier
 
 ### Step 6: Multi-Language Translation (`core/translator.py`)
 
-The `BrailleTranslator` supports **17 languages** via Google Translate (deep-translator):
+The `BrailleTranslator` supports **6 languages** via Google Translate (deep-translator):
 
 | Language | Code | TTS Voice |
 |:---------|:-----|:----------|
 | English | `en` | `en-US-JennyNeural` |
 | Hindi | `hi` | `hi-IN-SwaraNeural` |
 | Tamil | `ta` | `ta-IN-PallaviNeural` |
-| Marathi | `mr` | `mr-IN-AarohiNeural` |
-| Telugu | `te` | `te-IN-MohanNeural` |
-| Kannada | `kn` | `kn-IN-SapnaNeural` |
-| Bengali | `bn` | `bn-IN-TanishaaNeural` |
-| Gujarati | `gu` | `gu-IN-DhwaniNeural` |
-| Punjabi | `pa` | `pa-IN-OjasvNeural` |
 | Spanish | `es` | `es-ES-ElviraNeural` |
 | French | `fr` | `fr-FR-DeniseNeural` |
 | German | `de` | `de-DE-KatjaNeural` |
-| Arabic | `ar` | `ar-SA-ZariyahNeural` |
-| Japanese | `ja` | `ja-JP-NanamiNeural` |
-| Chinese (Simplified) | `zh-CN` | `zh-CN-XiaoxiaoNeural` |
-| Portuguese | `pt` | `pt-BR-FranciscaNeural` |
-| Russian | `ru` | `ru-RU-SvetlanaNeural` |
 
 All translations are **cached by MD5 hash** to avoid redundant network calls. English-to-English passes through instantly without any API call.
 
@@ -307,8 +296,8 @@ The `ContextMemory` module maintains a **sliding window of recently decoded sent
 
 ### AI & Language
 - **Two-Tier Error Correction**: Groq Llama-3.1 (primary) → pyspellchecker (offline fallback) — works with or without internet
-- **17-Language Translation**: Google Translate via deep-translator with result caching
-- **Neural TTS in 17 Languages**: Microsoft Edge neural voices, each matched to its own language
+- **6-Language Translation**: Google Translate via deep-translator with result caching
+- **Neural TTS in 6 Languages**: Microsoft Edge neural voices, each matched to its own language
 - **Sliding Context Memory**: The LLM corrector receives recent scan history for better semantic continuity
 
 ### Camera & Guidance
@@ -736,7 +725,7 @@ Translate decoded Braille text to any supported language.
 - Per-record delete
 
 ### 4. Settings Tab (`app/(tabs)/settings.tsx`)
-- **Language**: Select any of 17 supported translation target languages
+- **Language**: Select any of 6 supported translation target languages
 - **TTS Toggle**: Enable/disable audio playback
 - **High-Contrast Mode**: Switches to bright yellow/black accessibility palette
 - **Debug Info**: Shows API URL, model status, last scan stats

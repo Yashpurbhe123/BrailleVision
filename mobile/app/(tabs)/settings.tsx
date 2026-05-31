@@ -43,6 +43,7 @@ export default function SettingsScreen() {
     "Tamil": "ta",
     "Spanish": "es",
     "French": "fr",
+    "German": "de",
   });
 
   useEffect(() => {

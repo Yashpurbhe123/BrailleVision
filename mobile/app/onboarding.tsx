@@ -134,7 +134,7 @@ export default function OnboardingScreen() {
         { label: 'Spanish', code: 'es', badge: 'ES' },
         { label: 'French', code: 'fr', badge: 'FR' },
         { label: 'German', code: 'de', badge: 'DE' },
-        { label: 'Italian', code: 'it', badge: 'IT' },
+        { label: 'Tamil', code: 'ta', badge: 'TA' },
       ];
       return (
         <View style={styles.configContainer}>
