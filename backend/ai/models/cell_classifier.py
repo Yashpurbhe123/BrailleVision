@@ -23,6 +23,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
+import cv2
 import numpy as np
 from PIL import Image  # type: ignore
 
@@ -371,6 +372,27 @@ class CellClassifier:
             ),
         }
 
+    def preprocess_pil_image(self, pil_image: Image.Image) -> Image.Image:
+        """
+        Preprocess PIL image to match training conditions:
+        1. Grayscale conversion.
+        2. Resize to intermediate STANDARD_SIZE (64x64).
+        3. Histogram equalization.
+        """
+        # 1. Convert to grayscale if needed
+        if pil_image.mode != 'L':
+            pil_image = pil_image.convert('L')
+        
+        # 2. Resize to standard size (e.g. 64x64)
+        STANDARD_SIZE = 64
+        pil_image = pil_image.resize((STANDARD_SIZE, STANDARD_SIZE), Image.LANCZOS)
+        
+        # 3. Apply histogram equalization
+        img_array = np.array(pil_image)
+        img_array = cv2.equalizeHist(img_array)
+        
+        return Image.fromarray(img_array)
+
     def predict_single(self, pil_image: Image.Image) -> dict:
         """
         Classify one cropped Braille cell image.
@@ -385,6 +407,12 @@ class CellClassifier:
             raise RuntimeError("CellClassifier not loaded")
 
         import torch  # type: ignore
+
+        try:
+            pil_image = self.preprocess_pil_image(pil_image)
+        except Exception as exc:
+            logger.warning("predict_single: preprocessing failed: %s", exc)
+
         transform = self._transform or _get_infer_transform()
         tensor = transform(pil_image).unsqueeze(0).to(self._device)
 
@@ -443,7 +471,15 @@ class CellClassifier:
         transform = self._transform or _get_infer_transform()
 
         try:
-            tensors = [transform(img) for img in pil_images]
+            preprocessed_images = []
+            for img in pil_images:
+                try:
+                    preprocessed_images.append(self.preprocess_pil_image(img))
+                except Exception as exc:
+                    logger.warning("predict_batch: individual preprocessing failed: %s", exc)
+                    preprocessed_images.append(img)
+
+            tensors = [transform(img) for img in preprocessed_images]
             batch   = torch.stack(tensors).to(self._device)
         except Exception as exc:
             logger.warning("predict_batch: tensor build failed (%s) — single fallback", exc)

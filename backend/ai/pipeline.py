@@ -268,18 +268,21 @@ class BrailleAIPipeline:
             cells: Enriched cell dicts (output of _classify_cells).
 
         Returns:
-            List of {char, confidence} dicts for decode_from_predictions.
+            List of {char, confidence, pattern} dicts for decode_from_predictions.
         """
         predictions: list[dict] = []
         for cell in cells:
+            pattern = tuple(int(p) for p in cell.get("pattern", (0, 0, 0, 0, 0, 0)))
+
             # ── Priority 1: Blank cells are ALWAYS spaces ─────────────────
             # The segmenter injects cells with pattern (0,0,0,0,0,0) at word
             # boundaries. The classifier has no space class, so handle first.
-            dot_count = cell.get("dot_count", sum(cell.get("pattern", [])))
-            if dot_count == 0 or sum(cell.get("pattern", (0, 0, 0, 0, 0, 0))) == 0:
+            dot_count = cell.get("dot_count", sum(pattern))
+            if dot_count == 0 or sum(pattern) == 0:
                 predictions.append({
                     "char": " ",
                     "confidence": 1.0,
+                    "pattern": pattern,
                 })
                 continue
 
@@ -293,21 +296,173 @@ class BrailleAIPipeline:
             # identified 't','a','c' while pattern decoded to 'd','[ITER]','c').
             # Trust the classifier whenever its confidence is above threshold.
             if clf_char is not None and clf_char != " " and clf_conf >= CLASSIFIER_FALLBACK_THRESHOLD:
-                predictions.append({"char": clf_char, "confidence": clf_conf})
+                predictions.append({
+                    "char": clf_char,
+                    "confidence": clf_conf,
+                    "pattern": pattern,
+                })
                 continue
-
-            pattern = tuple(int(p) for p in cell.get("pattern", (0, 0, 0, 0, 0, 0)))
 
             # ── Priority 3: Exact Grade 1 dot-pattern lookup ──────────────
             # Fallback when classifier is unavailable or below threshold.
             if pattern in self.decoder.grade1:
-                predictions.append({"char": self.decoder.grade1[pattern], "confidence": 1.0})
+                predictions.append({
+                    "char": self.decoder.grade1[pattern],
+                    "confidence": 1.0,
+                    "pattern": pattern,
+                })
                 continue
 
             # ── Priority 4: Fuzzy dot-pattern fallback ────────────────────
             char, conf = self.decoder.decode_cell(pattern)
-            predictions.append({"char": char, "confidence": conf})
+            predictions.append({
+                "char": char,
+                "confidence": conf,
+                "pattern": pattern,
+            })
         return predictions
+
+    # ------------------------------------------------------------------
+    # WORD-LEVEL CHARACTER-BY-CHARACTER DECODING  (per handwritten notes)
+    # ------------------------------------------------------------------
+
+    def _decode_word_by_characters(
+        self,
+        cells: list[dict],
+        processed_img: np.ndarray,
+    ) -> tuple[list[dict], list[dict]]:
+        """
+        Decode a Braille word by classifying each cell individually.
+
+        Implements the approach from the BrailleVision handwritten design notes:
+            Detect full word → separate cells → decode each cell one-by-one
+            → combine all decoded characters → final word.
+
+        Why this is better than whole-word classification:
+          • The EfficientNet-B3 was trained on *single-cell* images.
+          • Feeding it the whole word at once causes confusion (96.8% acc
+            is measured on individual cells, not multi-cell strips).
+          • Classifying cell-by-cell and concatenating preserves full accuracy
+            for any word length.
+
+        Args:
+            cells:         Segmented cell dicts from BrailleCellSegmenter.segment().
+            processed_img: Full preprocessed image (numpy ndarray).
+
+        Returns:
+            Tuple of:
+              enriched_cells     – original cells list with classifier_char /
+                                   classifier_confidence fields added in-place.
+              decoded_characters – list of per-cell result dicts:
+                                   {char, confidence, cell_index, source}.
+        """
+        logger.info(
+            "[WORD-DECODE] Starting character-by-character decoding for %d cells",
+            len(cells),
+        )
+
+        # ── Step 1: Separate / crop each cell from the full image ─────
+        separated_cells = self.segmenter.separate_cells_horizontally(processed_img, cells)
+        logger.info("[WORD-DECODE] Separated %d individual cells", len(separated_cells))
+
+        decoded_characters: list[dict] = []
+
+        for sep_cell in separated_cells:
+            cell_idx   = sep_cell.get("index", 0)
+            dot_count  = sep_cell.get("dot_count", 0)
+            pattern    = sep_cell.get("pattern", (0, 0, 0, 0, 0, 0))
+
+            # ── Blank / space cell — classifier has no space output ────
+            if dot_count == 0 or sum(pattern) == 0:
+                logger.info("  Cell %d: BLANK → ' ' (space)", cell_idx)
+                decoded_characters.append({
+                    "char":       " ",
+                    "confidence": 1.0,
+                    "cell_index": cell_idx,
+                    "source":     "blank",
+                })
+                if cell_idx < len(cells):
+                    cells[cell_idx]["classifier_char"]       = " "
+                    cells[cell_idx]["classifier_confidence"] = 1.0
+                    cells[cell_idx]["classifier_top3"]       = [{"char": " ", "confidence": 1.0}]
+                    cells[cell_idx]["low_confidence"]        = False
+                continue
+
+            # ── Neural classifier path ────────────────────────────────
+            if self.classifier.is_available():
+                try:
+                    cell_image = sep_cell["image"]
+
+                    # crop_cell_to_pil already handles background inversion
+                    pil_crop = crop_cell_to_pil(
+                        cell_image,
+                        (0, 0, cell_image.shape[1], cell_image.shape[0]),
+                        padding=0,
+                    )
+
+                    if pil_crop is None:
+                        raise ValueError("crop_cell_to_pil returned None")
+
+                    # ── Step 2: Classify this single cell ─────────────
+                    prediction = self.classifier.predict_single(pil_crop)
+                    char       = prediction["char"]
+                    confidence = prediction["confidence"]
+
+                    logger.info(
+                        "  Cell %d: predicted='%s' conf=%.3f  top3=%s",
+                        cell_idx, char, confidence,
+                        [(t["char"], round(t["confidence"], 3))
+                         for t in prediction.get("top3", [])],
+                    )
+
+                    decoded_characters.append({
+                        "char":       char,
+                        "confidence": confidence,
+                        "cell_index": cell_idx,
+                        "source":     "classifier",
+                    })
+
+                    # Enrich original cell in-place
+                    if cell_idx < len(cells):
+                        cells[cell_idx]["classifier_char"]       = char
+                        cells[cell_idx]["classifier_confidence"] = confidence
+                        cells[cell_idx]["classifier_top3"]       = prediction.get("top3", [])
+                        cells[cell_idx]["low_confidence"]        = prediction.get("low_confidence", False)
+
+                    continue
+
+                except Exception as exc:
+                    logger.error(
+                        "  Cell %d: classifier failed (%s) — falling back to pattern",
+                        cell_idx, exc,
+                    )
+
+            # ── Pattern-lookup fallback (classifier unavailable or failed) ─
+            pat_tuple = tuple(int(p) for p in pattern)
+            char      = self.decoder.grade1.get(pat_tuple, "?")
+            conf      = 1.0 if pat_tuple in self.decoder.grade1 else 0.4
+            logger.info(
+                "  Cell %d: pattern-fallback pattern=%s → '%s' (conf=%.2f)",
+                cell_idx, pat_tuple, char, conf,
+            )
+            decoded_characters.append({
+                "char":       char,
+                "confidence": conf,
+                "cell_index": cell_idx,
+                "source":     "pattern",
+            })
+
+        # ── Step 3: Log combined result ──────────────────────────────
+        decoded_word = "".join(c["char"] for c in decoded_characters)
+        if decoded_characters:
+            avg_conf = float(np.mean([c["confidence"] for c in decoded_characters]))
+        else:
+            avg_conf = 0.0
+
+        logger.info("[WORD-DECODE] Raw decoded word : '%s'", decoded_word)
+        logger.info("[WORD-DECODE] Average confidence: %.3f", avg_conf)
+
+        return cells, decoded_characters
 
     # ------------------------------------------------------------------
     # LINE GROUPING (for live scan)
@@ -367,44 +522,118 @@ class BrailleAIPipeline:
         - Collapse runs of multiple spaces into a single space.
         - Remove any stray '?' noise characters at word boundaries.
         - Collapse consecutively repeated word patterns (e.g., 'olly olly olly' -> 'olly').
+        - Collapse N-word repeating chunks (e.g., 'oll j oll j oll' -> 'oll j').
         - Strip leading/trailing whitespace.
         """
         import re
-        # Validate decoded text has proper word boundaries
-        if "  " in text:  # double space
-            text = text.replace("  ", " ").strip()
+        if not text or not text.strip():
+            return text.strip() if text else ""
+
         # Collapse 2+ spaces to one
         text = re.sub(r" {2,}", " ", text)
         # Remove lone '?' that are isolated (noise from unrecognised dots)
         text = re.sub(r"(?<![\w])\?(?![\w])", "", text)
         # Clean up any double spaces left by '?' removal
         text = re.sub(r" {2,}", " ", text)
+        text = text.strip()
 
-        # Collapse repeated word patterns like 'olly olly olly' -> 'olly'
-        # This regex matches any word (3+ chars) repeated 2+ times, or any word repeated 3+ times.
+        if not text:
+            return ""
+
+        # ── Collapse simple consecutive repeated words ─────────────────
+        # e.g. 'olly olly olly' → 'olly'
         text = re.sub(r"\b(\w{3,})(?:\s+\1\b)+", r"\1", text, flags=re.IGNORECASE)
         text = re.sub(r"\b(\w+)(?:\s+\1\b){2,}", r"\1", text, flags=re.IGNORECASE)
+
+        # ── Collapse N-word repeating chunk patterns ───────────────────
+        # e.g. 'oll j oll j oll' (unit='oll j' repeated 2.5×) → 'oll j'
+        # e.g. 'abc def ghi abc def ghi abc def ghi' → 'abc def ghi'
+        words = text.split()
+        for unit_size in range(1, 5):          # try unit sizes 1–4
+            if len(words) < unit_size * 2:     # need at least 2 full units
+                continue
+            unit = [w.lower() for w in words[:unit_size]]
+            full_repeats = 0
+            i = 0
+            while i + unit_size <= len(words):
+                chunk = [w.lower() for w in words[i:i + unit_size]]
+                if chunk == unit:
+                    full_repeats += 1
+                    i += unit_size
+                else:
+                    break
+            # Allow partial tail match (e.g. last element of the unit)
+            if full_repeats >= 2:
+                remaining = [w.lower() for w in words[i:]]
+                tail_matches = (remaining == unit[:len(remaining)]) if remaining else True
+                if tail_matches:
+                    collapsed = " ".join(words[:unit_size])
+                    logger.info(
+                        "_clean_decoded_text: collapsed %d×%d-word chunk '%s' → '%s'",
+                        full_repeats, unit_size, text, collapsed,
+                    )
+                    text = collapsed
+                    break
 
         return text.strip()
 
     @staticmethod
     def _detect_repetition(text: str) -> bool:
         """
-        Check if the decoded text has suspicious repeated word patterns
-        (e.g., 'olly olly olly', 'hello hello hello', or 'word word word').
-        Also checks for repeated character chunks like 'abcabcabc'.
+        Check if the decoded text has suspicious repeated word patterns.
+
+        Detects:
+          • Simple consecutive repetition:   'olly olly olly'
+          • N-word chunk repetition:         'oll j oll j oll'  (unit='oll j')
+          • Repeated character substrings:   'abcabcabc'
         """
         if not text or len(text) < 6:
             return False
 
         words = text.split()
+
+        # ── Simple consecutive word repetition ────────────────────────
         if len(words) >= 3:
             for i in range(len(words) - 2):
-                if words[i].lower() == words[i + 1].lower() == words[i + 2].lower() and len(words[i]) >= 3:
-                    logger.warning("pipeline: suspicious word repetition detected: %s", words[i])
+                if (
+                    words[i].lower() == words[i + 1].lower() == words[i + 2].lower()
+                    and len(words[i]) >= 3
+                ):
+                    logger.warning(
+                        "pipeline: suspicious word repetition: '%s'", words[i]
+                    )
                     return True
 
-        # Check for sequential repeated substrings (e.g. "abcabcabc")
+        # ── N-word chunk repetition: 'X Y X Y X' ─────────────────────
+        # Try every unit size from 1 to 4 words.
+        # A unit is considered repeating if it appears ≥ 2 full times at the
+        # start of the word list, with an optional partial tail match.
+        for unit_size in range(1, 5):
+            if len(words) < unit_size * 2:   # need at least 2 full copies
+                continue
+            unit = [w.lower() for w in words[:unit_size]]
+            # Unit must contain at least one word of length ≥ 2 (not pure noise)
+            if not any(len(w) >= 2 for w in unit):
+                continue
+            full_repeats = 0
+            i = 0
+            while i + unit_size <= len(words):
+                if [w.lower() for w in words[i:i + unit_size]] == unit:
+                    full_repeats += 1
+                    i += unit_size
+                else:
+                    break
+            if full_repeats >= 2:
+                # Allow optional partial tail
+                remaining = [w.lower() for w in words[i:]]
+                if not remaining or remaining == unit[:len(remaining)]:
+                    logger.warning(
+                        "pipeline: %d-word chunk repeated %dx: %s",
+                        unit_size, full_repeats, " ".join(words[:unit_size]),
+                    )
+                    return True
+
+        # ── Repeated character substrings ─────────────────────────────
         for chunk_len in range(3, 10):
             if len(text) < chunk_len * 3:
                 continue
@@ -412,8 +641,13 @@ class BrailleAIPipeline:
                 chunk = text[i:i + chunk_len]
                 if not chunk.strip() or not any(c.isalnum() for c in chunk):
                     continue
-                if text[i + chunk_len:i + chunk_len * 2] == chunk and text[i + chunk_len * 2:i + chunk_len * 3] == chunk:
-                    logger.warning("pipeline: suspicious substring chunk repetition detected: %s", chunk)
+                if (
+                    text[i + chunk_len:i + chunk_len * 2] == chunk
+                    and text[i + chunk_len * 2:i + chunk_len * 3] == chunk
+                ):
+                    logger.warning(
+                        "pipeline: substring chunk repetition: '%s'", chunk
+                    )
                     return True
 
         return False
@@ -492,8 +726,8 @@ class BrailleAIPipeline:
             w, h = pil_img.size
             aspect_ratio = w / h if h > 0 else 1.0
             
-            # A single-cell crop is usually small (e.g. < 800x800) and squareish
-            is_single_cell = (w < 800 and h < 800) and (0.5 <= aspect_ratio <= 2.0)
+            # A single-cell crop is usually small (e.g. < 250x250) and squareish/vertical
+            is_single_cell = (w < 250 and h < 250) and (0.4 <= aspect_ratio <= 1.2)
             logger.info("process_image: Uploaded image size %dx%d, aspect_ratio=%.2f, is_single_cell=%s", w, h, aspect_ratio, is_single_cell)
         except Exception as e:
             logger.warning("process_image: failed to load PIL image for single-cell check: %s", e)
@@ -546,7 +780,6 @@ class BrailleAIPipeline:
             annotated_b64 = None
             if save_annotated:
                 try:
-                    import cv2
                     vis_img = np.array(pil_img)
                     vis_img = cv2.cvtColor(vis_img, cv2.COLOR_RGB2BGR)
                     cv2.rectangle(vis_img, (0, 0), (w - 1, h - 1), (46, 204, 113), 4)
@@ -644,63 +877,93 @@ class BrailleAIPipeline:
                 cell.get("dot_count", 0),
             )
 
-        # ── Step 4: Classify (EfficientNet-B3) ────────────────────
-        cells, classifier_used = self._classify_cells(cells, processed_img)
+        # ── Step 4: CHARACTER-BY-CHARACTER DECODING ───────────────
+        # Implements the handwritten-notes approach:
+        #   detect word → separate cells → decode each cell individually
+        #   → combine all decoded characters → final word
+        #
+        # Replaces the old batch-classify approach: each cell is now
+        # classified in isolation with predict_single(), which is exactly
+        # how the EfficientNet-B3 was trained (on single-cell images).
+        cells, decoded_characters = self._decode_word_by_characters(cells, processed_img)
 
-        # [DEBUG] Log post-classification state
-        logger.info("[DEBUG] After classification:")
-        for i, cell in enumerate(cells):
-            clf_char = cell.get("classifier_char", "N/A")
-            clf_conf = cell.get("classifier_confidence", 0.0)
-            pattern = cell.get("pattern")
-            # Also show what pure pattern-lookup would give
-            pat_tuple = tuple(int(p) for p in pattern) if pattern else ()
-            pat_char = self.decoder.grade1.get(pat_tuple, "<not in grade1>")
-            logger.info(
-                "  Cell %d: classifier='%s' conf=%.3f | pattern=%s → grade1='%s'",
-                i, clf_char, clf_conf, pattern, pat_char,
-            )
+        classifier_used = bool(
+            decoded_characters
+            and any(c.get("source") == "classifier" for c in decoded_characters)
+        )
 
-        predictions = self._cells_to_predictions(cells)
-        logger.info("[DEBUG] Final predictions sent to decoder: %s",
-                    [(p.get("char"), round(p.get("confidence", 0.0), 3)) for p in predictions])
+        # Build predictions list compatible with BrailleDecoder
+        predictions: list[dict] = []
+        for dc in decoded_characters:
+            cidx    = dc.get("cell_index", 0)
+            pat     = tuple(int(p) for p in cells[cidx].get("pattern", (0,) * 6)) \
+                      if cidx < len(cells) else (0,) * 6
+            predictions.append({
+                "char":       dc["char"],
+                "confidence": dc["confidence"],
+                "pattern":    pat,
+            })
 
-        # ── Step 5: Decode ─────────────────────────────────────────
-        if classifier_used and predictions:
+        logger.info(
+            "[WORD-DECODE] Final predictions → decoder: %s",
+            [(p["char"], round(p["confidence"], 3)) for p in predictions],
+        )
+
+        # ── Step 5: Decode predictions → raw text + per-char confidences
+        if predictions:
             raw_text, confidences = self.decoder.decode_from_predictions(predictions)
         else:
             decode_stats = self.decoder.decode_with_stats(cells)
-            raw_text = decode_stats["decoded_text"]
-            confidences = decode_stats["confidences"]
+            raw_text     = decode_stats["decoded_text"]
+            confidences  = decode_stats["confidences"]
 
         # Post-process: collapse multi-spaces and strip noise → proper sentence
         cleaned_text = self._clean_decoded_text(raw_text)
 
         # Check for text repetitions (like 'olly olly olly') and retry with scaled-up ds if found
         if self._detect_repetition(cleaned_text):
-            logger.warning("process_image: repetition detected in decoded text! Retrying segmentation with ds * 1.5")
+            logger.warning(
+                "process_image: repetition detected in '%s'! Retrying segmentation with ds * 1.5",
+                cleaned_text,
+            )
             ds_scale = 1.5
             retry_cells = self.segmenter.segment(dots, image_width=img_w, ds_scale=ds_scale)
-            retry_cells, retry_classifier_used = self._classify_cells(retry_cells, processed_img)
-            retry_predictions = self._cells_to_predictions(retry_cells)
 
-            if retry_classifier_used and retry_predictions:
+            # Re-run character-by-character decoding on retry cells
+            retry_cells, retry_decoded_chars = self._decode_word_by_characters(retry_cells, processed_img)
+            retry_classifier_used = bool(
+                retry_decoded_chars
+                and any(c.get("source") == "classifier" for c in retry_decoded_chars)
+            )
+
+            retry_predictions: list[dict] = []
+            for dc in retry_decoded_chars:
+                cidx = dc.get("cell_index", 0)
+                pat  = tuple(int(p) for p in retry_cells[cidx].get("pattern", (0,) * 6)) \
+                       if cidx < len(retry_cells) else (0,) * 6
+                retry_predictions.append({
+                    "char":       dc["char"],
+                    "confidence": dc["confidence"],
+                    "pattern":    pat,
+                })
+
+            if retry_predictions:
                 retry_raw_text, retry_confidences = self.decoder.decode_from_predictions(retry_predictions)
             else:
                 retry_decode_stats = self.decoder.decode_with_stats(retry_cells)
-                retry_raw_text = retry_decode_stats["decoded_text"]
-                retry_confidences = retry_decode_stats["confidences"]
+                retry_raw_text     = retry_decode_stats["decoded_text"]
+                retry_confidences  = retry_decode_stats["confidences"]
 
             retry_cleaned_text = self._clean_decoded_text(retry_raw_text)
 
-            # Compare results: if retry yields a valid non-empty result, accept it!
+            # Accept retry result if it produces valid non-empty text
             if retry_cleaned_text.strip():
-                cells = retry_cells
-                classifier_used = retry_classifier_used
-                predictions = retry_predictions
-                raw_text = retry_raw_text
-                confidences = retry_confidences
-                cleaned_text = retry_cleaned_text
+                cells            = retry_cells
+                classifier_used  = retry_classifier_used
+                predictions      = retry_predictions
+                raw_text         = retry_raw_text
+                confidences      = retry_confidences
+                cleaned_text     = retry_cleaned_text
                 logger.info("process_image: retry successful! New text: '%s'", cleaned_text)
             else:
                 logger.info("process_image: retry returned empty text, keeping original")

@@ -30,6 +30,9 @@ SYSTEM_PROMPT = (
     "imperfect dot detection (similar to OCR errors) or over-segmentation repetition errors.\n\n"
     "Your job: Fix ONLY likely detection errors. Preserve meaning exactly. "
     "Do not add or remove words unless they are clearly wrong or repeated.\n\n"
+    "IMPORTANT: You may be provided with previously decoded text context for topic/domain reference. "
+    "Do NOT merge, prepend, or append this context to the corrected text. "
+    "Your output must ONLY contain the corrected version of the current text to correct.\n\n"
     "Common errors to fix:\n"
     "- Repeated words/substrings (e.g. 'olly olly olly oxen' → 'olly oxen', 'hello hello' → 'hello')\n"
     "- Missing letters: 'helo' → 'hello'\n"
@@ -131,9 +134,15 @@ class AIErrorCorrector:
             return self._cache[cache_key]
 
         try:
-            user_msg = f"Text to correct: {text}"
             if context:
-                user_msg = f"Context from previous text: {context}\n\n{user_msg}"
+                user_msg = (
+                    f"--- CONTEXT OF PREVIOUSLY DECODED SENTENCES ---\n"
+                    f"{context}\n"
+                    f"--- END OF CONTEXT ---\n\n"
+                    f"Text to correct: {text}"
+                )
+            else:
+                user_msg = f"Text to correct: {text}"
 
             response = self._client.chat.completions.create(
                 model=self._model,

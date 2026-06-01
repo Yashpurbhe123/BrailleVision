@@ -893,6 +893,113 @@ class BrailleCellSegmenter:
         return sorted(cells, key=lambda c: c.get('x', 0))
 
     # ------------------------------------------------------------------
+    # WORD-LEVEL CHARACTER SEPARATION  (v1 — per handwritten notes)
+    # ------------------------------------------------------------------
+
+    def separate_cells_horizontally(
+        self, word_image: np.ndarray, cells: list[dict]
+    ) -> list[dict]:
+        """
+        Crop each individual Braille cell from the full word image.
+
+        Implements the approach from the BrailleVision handwritten design notes:
+            1. Full word image arrives (all cells together).
+            2. Each cell's bbox is used to crop it individually from the image.
+            3. Each cropped cell image is returned so the classifier can
+               classify them ONE AT A TIME → combine → final word.
+
+        Key: Normalize each cell to match ML model training conditions.
+
+        Args:
+            word_image: Full preprocessed image (grayscale/BGR numpy ndarray)
+                        containing all Braille cells.
+            cells: Ordered list of cell dicts from segment(), each must have
+                   a 'bbox' key of the form (x1, y1, x2, y2).
+
+        Returns:
+            List of separated cell dicts, sorted left-to-right by X.
+        """
+        if word_image is None or word_image.size == 0:
+            logger.warning("[WORD-DECODE] separate_cells_horizontally: empty word_image")
+            return []
+
+        # Sort left-to-right so index matches reading order
+        sorted_cells = sorted(cells, key=lambda c: c.get("x", 0))
+
+        logger.info(
+            "[WORD-DECODE] separate_cells_horizontally: separating %d cells with normalization",
+            len(sorted_cells),
+        )
+
+        separated: list[dict] = []
+
+        for idx, cell in enumerate(sorted_cells):
+            bbox = cell.get("bbox")
+            if not bbox or len(bbox) < 4:
+                logger.warning(
+                    "  Cell %d: invalid/missing bbox=%s — skipping", idx, bbox
+                )
+                continue
+
+            x1, y1, x2, y2 = bbox
+
+            # IMPORTANT: Add padding around cell to include context
+            # This matches how cells appear in training data
+            padding = 5  # pixels
+            x1_padded = max(0, int(x1 - padding))
+            y1_padded = max(0, int(y1 - padding))
+            x2_padded = min(word_image.shape[1], int(x2 + padding))
+            y2_padded = min(word_image.shape[0], int(y2 + padding))
+
+            cell_image = word_image[y1_padded:y2_padded, x1_padded:x2_padded]
+
+            if cell_image.size == 0:
+                logger.warning(f"  Cell {idx}: Empty crop")
+                continue
+
+            # NORMALIZE: Apply same preprocessing as training data
+            # 1. Ensure square aspect ratio (pad if needed)
+            h, w = cell_image.shape[:2]
+            max_dim = max(h, w)
+
+            # Create square canvas
+            square_image = np.ones((max_dim, max_dim), dtype=np.uint8) * 255
+            y_offset = (max_dim - h) // 2
+            x_offset = (max_dim - w) // 2
+            square_image[y_offset:y_offset+h, x_offset:x_offset+w] = cell_image
+
+            # 2. Resize to standard size (match training input size)
+            STANDARD_SIZE = 64
+            cell_image_normalized = cv2.resize(square_image, (STANDARD_SIZE, STANDARD_SIZE), interpolation=cv2.INTER_LINEAR)
+
+            # 3. Normalize contrast (histogram equalization)
+            # This helps with lighting variations
+            cell_image_normalized = cv2.equalizeHist(cell_image_normalized)
+
+            # 4. Threshold to binary (match training data)
+            _, cell_image_binary = cv2.threshold(cell_image_normalized, 127, 255, cv2.THRESH_BINARY)
+
+            separated_cell = {
+                **cell,                          # inherit all original fields
+                "index":         idx,
+                "image":         cell_image_binary,  # Use normalized image
+                "image_raw":     cell_image,     # Keep original for debugging
+                "original_cell": cell,
+            }
+            separated.append(separated_cell)
+
+            logger.info(
+                "  Cell %d: Normalized %s → %dx%d, dot_count=%d",
+                idx, cell_image.shape, STANDARD_SIZE, STANDARD_SIZE, cell.get("dot_count", 0)
+            )
+
+        logger.info(
+            "[WORD-DECODE] separate_cells_horizontally: %d/%d cells separated",
+            len(separated), len(sorted_cells),
+        )
+        return separated
+
+    # ------------------------------------------------------------------
     # VISUALISE
     # ------------------------------------------------------------------
 

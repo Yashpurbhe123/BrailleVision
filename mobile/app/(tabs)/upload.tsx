@@ -36,6 +36,7 @@ export default function UploadScreen() {
   const store = useAppStore();
   const [loading, setLoading] = useState<boolean>(false);
   const [fileType, setFileType] = useState<'image' | null>(null);
+  const [uploadedImageUri, setUploadedImageUri] = useState<string | null>(null);
   
   // Results
   const [imageResult, setImageResult] = useState<any>(null);
@@ -59,6 +60,7 @@ export default function UploadScreen() {
     setErrorMsg(null);
     setImageResult(null);
     setFileType(null);
+    setUploadedImageUri(null);
 
     if (Platform.OS !== 'web') {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -80,6 +82,7 @@ export default function UploadScreen() {
     }
 
     const uri = result.assets[0].uri;
+    setUploadedImageUri(uri);          // ← show image immediately
     setFileType('image');
     setLoading(true);
     store.setUploading(true);  // pause live scanner
@@ -162,10 +165,21 @@ export default function UploadScreen() {
       )}
 
       {/* IMAGE SCANNING DETAILS */}
-      {fileType === 'image' && imageResult && (
+      {fileType === 'image' && (uploadedImageUri || imageResult) && (
         <View style={styles.resultCard}>
-          {/* Annotated image overlay preview */}
-          {imageResult.annotated_image_base64 && (
+
+          {/* ── Uploaded image preview (always shown) ── */}
+          {uploadedImageUri && !imageResult?.annotated_image_base64 && (
+            <Image
+              style={styles.annotatedPreview}
+              source={{ uri: uploadedImageUri }}
+              resizeMode="contain"
+              accessibilityLabel="Uploaded Braille image"
+            />
+          )}
+
+          {/* ── Annotated image overlay (shown when backend provides it) ── */}
+          {imageResult?.annotated_image_base64 && (
             <Image
               style={styles.annotatedPreview}
               source={{ uri: `data:image/jpeg;base64,${imageResult.annotated_image_base64}` }}
@@ -174,35 +188,48 @@ export default function UploadScreen() {
             />
           )}
 
-          {/* Letter confidence score indicator */}
-          <ConfidenceDisplay
-            text={imageResult.corrected_text || imageResult.raw_text}
-            confidences={imageResult.confidences || []}
-            avgConfidence={imageResult.avg_confidence}
-          />
+          {/* Loading overlay on the image while processing */}
+          {loading && (
+            <View style={styles.imageLoadingOverlay}>
+              <ActivityIndicator size="large" color={COLORS.primary} />
+              <Text style={styles.imageLoadingText}>Analysing Braille...</Text>
+            </View>
+          )}
 
-          {/* Core Text output */}
-          <View style={styles.textDetails}>
-            <Text style={styles.sectionHeader}>DECODED OUTPUT</Text>
-            <Text style={styles.mainOutputText}>
-              {imageResult.corrected_text || imageResult.raw_text}
-            </Text>
+          {/* Only show decode results when we have them */}
+          {imageResult && (
+            <>
+              {/* Letter confidence score indicator */}
+              <ConfidenceDisplay
+                text={imageResult.corrected_text || imageResult.raw_text}
+                confidences={imageResult.confidences || []}
+                avgConfidence={imageResult.avg_confidence}
+              />
 
-            {imageResult.was_corrected && (
-              <View style={styles.correctionBadge}>
-                <Sparkles color={COLORS.primary} size={11} strokeWidth={2.5} style={{ marginRight: 4 }} />
-                <Text style={styles.correctionBadgeText}>
-                  AI SPELL-CORRECTED ({imageResult.correction_method})
+              {/* Core Text output */}
+              <View style={styles.textDetails}>
+                <Text style={styles.sectionHeader}>DECODED OUTPUT</Text>
+                <Text style={styles.mainOutputText}>
+                  {imageResult.corrected_text || imageResult.raw_text}
                 </Text>
-              </View>
-            )}
-          </View>
 
-          {/* Audio voice player */}
-          <TTSPlayer
-            text={imageResult.translated_text || imageResult.corrected_text || imageResult.raw_text}
-            playbackKey="upload-image"
-          />
+                {imageResult.was_corrected && (
+                  <View style={styles.correctionBadge}>
+                    <Sparkles color={COLORS.primary} size={11} strokeWidth={2.5} style={{ marginRight: 4 }} />
+                    <Text style={styles.correctionBadgeText}>
+                      AI SPELL-CORRECTED ({imageResult.correction_method})
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Audio voice player */}
+              <TTSPlayer
+                text={imageResult.translated_text || imageResult.corrected_text || imageResult.raw_text}
+                playbackKey="upload-image"
+              />
+            </>
+          )}
         </View>
       )}
     </ScrollView>
@@ -324,6 +351,25 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
     borderWidth: 1.5,
     borderColor: 'rgba(6, 182, 212, 0.25)',
+  },
+  imageLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 240,
+    borderRadius: 20,
+    backgroundColor: 'rgba(4, 2, 9, 0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  imageLoadingText: {
+    color: COLORS.primary,
+    fontSize: 12,
+    fontWeight: TYPOGRAPHY.weight.heavy,
+    marginTop: 10,
+    letterSpacing: 0.8,
   },
   textDetails: {
     marginVertical: 12,

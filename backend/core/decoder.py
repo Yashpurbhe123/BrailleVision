@@ -450,7 +450,7 @@ class BrailleDecoder:
         Decode a sequence of classifier predictions directly into text.
 
         Takes the output of ``CellClassifier.predict_batch()`` — a list of
-        ``{char, confidence, ...}`` dicts — and applies capital/number-mode
+        ``{char, confidence, pattern, ...}`` dicts — and applies capital/number-mode
         modifier logic, producing the same output format as ``decode_sequence``.
 
         This method intentionally mirrors the state machine in ``decode_sequence``
@@ -461,6 +461,7 @@ class BrailleDecoder:
             predictions: List of dicts, each with at minimum:
                 - ``char``       (str)   — predicted character or indicator token
                 - ``confidence`` (float) — classifier confidence (0.0–1.0)
+                - ``pattern``    (tuple) — optional original 6-dot pattern (tuple of 0/1)
 
         Returns:
             Tuple of (decoded_text, per_character_confidence_list).
@@ -471,12 +472,47 @@ class BrailleDecoder:
         capitalize_next = False
         number_mode = False
 
-        for pred in predictions:
+        def is_standalone_pred(i_idx: int) -> bool:
+            # Find contiguous non-space segment boundaries
+            start = i_idx
+            while start > 0:
+                p_char = predictions[start - 1].get("char", " ")
+                p_pat = predictions[start - 1].get("pattern")
+                if p_char == " " or p_pat == (0, 0, 0, 0, 0, 0):
+                    break
+                start -= 1
+            
+            end = i_idx
+            while end < len(predictions) - 1:
+                p_char = predictions[end + 1].get("char", " ")
+                p_pat = predictions[end + 1].get("pattern")
+                if p_char == " " or p_pat == (0, 0, 0, 0, 0, 0):
+                    break
+                end += 1
+            
+            # Count content-bearing cells in this segment
+            content_count = 0
+            for i in range(start, end + 1):
+                p_char = predictions[i].get("char", "")
+                p_pat = predictions[i].get("pattern")
+                if p_pat:
+                    p_char_val, _ = self.decode_cell(p_pat)
+                else:
+                    p_char_val = p_char
+
+                if p_char_val not in ["[CAP]", "[NUM]", "[ITER]", " ", ""]:
+                    content_count += 1
+            
+            return content_count == 1
+
+        for idx, pred in enumerate(predictions):
             char: str = pred.get("char", "?")
             conf: float = float(pred.get("confidence", 0.0))
+            raw_pattern = pred.get("pattern")
+            pattern = tuple(int(p) for p in raw_pattern) if raw_pattern else None
 
             # Space cell handling: immediately append and continue, exiting number mode
-            if char == " ":
+            if char == " " or (pattern is not None and pattern == (0, 0, 0, 0, 0, 0)):
                 text_parts.append(" ")
                 confidences.append(conf)
                 number_mode = False
@@ -495,19 +531,76 @@ class BrailleDecoder:
                 continue
 
             # ── Number mode: digits 0-9 pass through; anything else exits ─
-            if number_mode and char.isalpha():
-                # Classifier may output 'a'-'j'; map to digits via number table
-                letter_to_digit: dict[str, str] = {
-                    "a": "1", "b": "2", "c": "3", "d": "4", "e": "5",
-                    "f": "6", "g": "7", "h": "8", "i": "9", "j": "0",
-                }
-                mapped = letter_to_digit.get(char.lower())
-                if mapped:
-                    text_parts.append(mapped)
+            if number_mode:
+                if char.isdigit():
+                    text_parts.append(char)
                     confidences.append(conf)
                     continue
+                elif char.isalpha():
+                    # Classifier may output 'a'-'j'; map to digits via number table
+                    letter_to_digit: dict[str, str] = {
+                        "a": "1", "b": "2", "c": "3", "d": "4", "e": "5",
+                        "f": "6", "g": "7", "h": "8", "i": "9", "j": "0",
+                    }
+                    mapped = letter_to_digit.get(char.lower())
+                    if mapped:
+                        text_parts.append(mapped)
+                        confidences.append(conf)
+                        continue
+                    else:
+                        number_mode = False  # non a-j letter exits number mode
                 else:
-                    number_mode = False  # non a-j letter exits number mode
+                    number_mode = False
+
+            # ── Step C: Grade 2 whole-word contractions ─────────────
+            if not number_mode and pattern is not None:
+                # Check that previous and next cells are spaces (or start/end of sequence)
+                prev_ok = False
+                if idx == 0:
+                    prev_ok = True
+                else:
+                    prev_pat = predictions[idx - 1].get("pattern")
+                    prev_char = predictions[idx - 1].get("char")
+                    if prev_char == " " or prev_pat == (0, 0, 0, 0, 0, 0):
+                        prev_ok = True
+                    elif prev_char == "[CAP]" or prev_pat == (0, 0, 0, 0, 0, 1): # [CAP]
+                        if idx - 1 == 0:
+                            prev_ok = True
+                        else:
+                            prev_prev_pat = predictions[idx - 2].get("pattern")
+                            prev_prev_char = predictions[idx - 2].get("char")
+                            if prev_prev_char == " " or prev_prev_pat == (0, 0, 0, 0, 0, 0):
+                                prev_ok = True
+
+                next_ok = False
+                if idx == len(predictions) - 1:
+                    next_ok = True
+                else:
+                    next_pat = predictions[idx + 1].get("pattern")
+                    next_char = predictions[idx + 1].get("char")
+                    if next_char == " " or next_pat == (0, 0, 0, 0, 0, 0):
+                        next_ok = True
+
+                if pattern in self.grade2_single and prev_ok and next_ok and is_standalone_pred(idx):
+                    word = self.grade2_single[pattern]
+                    if capitalize_next:
+                        word = word.capitalize()
+                        capitalize_next = False
+                    text_parts.append(word)
+                    confidences.append(conf)
+                    logger.debug("decode_from_predictions: Grade2 whole-word '%s'", word)
+                    continue
+
+                # ── Step D: Grade 2 affixes ──────────────────────────
+                if pattern in self.grade2_affixes:
+                    affix = self.grade2_affixes[pattern]
+                    if capitalize_next:
+                        affix = affix.capitalize()
+                        capitalize_next = False
+                    text_parts.append(affix)
+                    confidences.append(conf)
+                    logger.debug("decode_from_predictions: Grade2 affix '%s'", affix)
+                    continue
 
             # ── Map digits back to letters if not in number mode ─────────
             if not number_mode and char.isdigit():

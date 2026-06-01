@@ -8,10 +8,25 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
+
+# ─────────────────────────────────────────────────────────────
+# PATH RESOLUTION
+# ─────────────────────────────────────────────────────────────
+
+# Layout:
+#   BrailleVision/
+#     backend/core/detector.py   ← this file
+#     models/yolov8n.pt          ← target model
+_BACKEND_DIR  = Path(__file__).resolve().parent.parent   # → backend/
+_PROJECT_ROOT = _BACKEND_DIR.parent                       # → BrailleVision/
+_MODELS_DIR   = _PROJECT_ROOT / "models"
+
+DEFAULT_YOLO_PATH = _MODELS_DIR / "yolov8n.pt"
 
 # ─────────────────────────────────────────────────────────────
 # CONSTANTS
@@ -84,7 +99,14 @@ class HybridBrailleDetector:
         self.blob_detector = self._create_blob_detector()
         self.yolo: Optional[object] = None
         self.yolo_available = False
-        self._load_yolo_model(model_path or os.getenv("MODEL_PATH", ""))
+
+        # Resolve model path: prefer explicit arg, then env var, then models/yolov8n.pt
+        resolved_path = (
+            model_path
+            or os.getenv("MODEL_PATH", "")
+            or str(DEFAULT_YOLO_PATH)
+        )
+        self._load_yolo_model(resolved_path)
         logger.info(
             "HybridBrailleDetector ready. yolo_available=%s", self.yolo_available
         )
@@ -279,10 +301,20 @@ class HybridBrailleDetector:
 
             if model_path and os.path.exists(model_path):
                 self.yolo = YOLO(model_path)
-                logger.info("YOLOv8: loaded custom model from '%s'", model_path)
+                logger.info("YOLOv8: loaded model from '%s'", model_path)
+            elif DEFAULT_YOLO_PATH.exists():
+                self.yolo = YOLO(str(DEFAULT_YOLO_PATH))
+                logger.info(
+                    "YOLOv8: loaded models/yolov8n.pt from '%s'", DEFAULT_YOLO_PATH
+                )
             else:
+                # Last-resort: let ultralytics download yolov8n.pt
                 self.yolo = YOLO("yolov8n.pt")
-                logger.info("YOLOv8: loaded pretrained yolov8n.pt (no custom model found)")
+                logger.warning(
+                    "YOLOv8: models/yolov8n.pt not found at '%s' — "
+                    "falling back to ultralytics auto-download",
+                    DEFAULT_YOLO_PATH,
+                )
 
             # Warmup pass
             dummy = np.zeros((YOLO_INPUT_SIZE, YOLO_INPUT_SIZE, 3), dtype=np.uint8)

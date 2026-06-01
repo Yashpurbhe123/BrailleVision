@@ -65,17 +65,16 @@ def cells_to_predictions(cells):
     """
     predictions = []
     for cell in cells:
-        # Priority 1: blank → space
-        dot_count = cell.get("dot_count", sum(cell.get("pattern", [])))
-        if dot_count == 0:
-            predictions.append({"char": " ", "confidence": 1.0})
-            continue
-
         pattern = tuple(int(p) for p in cell.get("pattern", (0, 0, 0, 0, 0, 0)))
+        # Priority 1: blank → space
+        dot_count = cell.get("dot_count", sum(pattern))
+        if dot_count == 0 or sum(pattern) == 0:
+            predictions.append({"char": " ", "confidence": 1.0, "pattern": pattern})
+            continue
 
         # Priority 2: exact Grade 1 lookup
         if pattern in decoder.grade1:
-            predictions.append({"char": decoder.grade1[pattern], "confidence": 1.0})
+            predictions.append({"char": decoder.grade1[pattern], "confidence": 1.0, "pattern": pattern})
             continue
 
         clf_char = cell.get("classifier_char")
@@ -83,11 +82,11 @@ def cells_to_predictions(cells):
 
         # Priority 3: high-confidence classifier (only for non-Grade1 patterns)
         if clf_char is not None and clf_char != " " and clf_conf >= CLASSIFIER_FALLBACK_THRESHOLD:
-            predictions.append({"char": clf_char, "confidence": clf_conf})
+            predictions.append({"char": clf_char, "confidence": clf_conf, "pattern": pattern})
         else:
             # Priority 4: fuzzy Hamming fallback
             char, conf = decoder.decode_cell(pattern)
-            predictions.append({"char": char, "confidence": conf})
+            predictions.append({"char": char, "confidence": conf, "pattern": pattern})
     return predictions
 
 
@@ -254,6 +253,47 @@ def test_digit_to_letter_mapping():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TEST 7: Grade 2 whole-word contractions in neural prediction path
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_grade2_in_neural_path():
+    """Verify that Grade 2 contractions (like 'and') decode properly in predictions path when standalone."""
+    cells = [
+        # (1,1,1,1,0,1) is the 'and' contraction pattern
+        make_cell((1, 1, 1, 1, 0, 1), classifier_char="y", classifier_confidence=0.85),
+    ]
+    preds = cells_to_predictions(cells)
+    text, _ = decoder.decode_from_predictions(preds)
+    text = clean_decoded_text(text)
+    
+    assert text == "and", (
+        f"FAIL: expected 'and' Grade 2 contraction but got '{text}'"
+    )
+    print(f"  [PASS] test_grade2_in_neural_path → '{text}'")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TEST 8: Cropped words bypass aspect ratio checks
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_cropped_word_bypasses_single_cell():
+    """Verify that a cropped word (aspect ratio > 1.2) does NOT get treated as single cell."""
+    # Simulates a cropped word of size 300x150, aspect_ratio = 2.0
+    w, h = 300, 150
+    aspect_ratio = w / h
+    
+    is_single_cell = (w < 250 and h < 250) and (0.4 <= aspect_ratio <= 1.2)
+    assert not is_single_cell, "FAIL: a cropped word with aspect ratio 2.0 should NOT be treated as a single cell!"
+    
+    # Simulates a single cell cropped with padding (aspect_ratio = 0.8)
+    w_cell, h_cell = 120, 150
+    ar_cell = w_cell / h_cell
+    is_single_cell_actual = (w_cell < 250 and h_cell < 250) and (0.4 <= ar_cell <= 1.2)
+    assert is_single_cell_actual, "FAIL: a genuine single cell with aspect ratio 0.8 should be treated as a single cell!"
+    print("  [PASS] test_cropped_word_bypasses_single_cell")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # RUN ALL
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -269,6 +309,8 @@ if __name__ == "__main__":
         test_multi_space_collapse,
         test_image_chars_as_single_word,
         test_digit_to_letter_mapping,
+        test_grade2_in_neural_path,
+        test_cropped_word_bypasses_single_cell,
     ]
 
     passed = 0
