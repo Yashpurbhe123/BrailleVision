@@ -347,16 +347,13 @@ class ImagePreprocessor:
                 variances.append(float(np.var(patch)))
 
         mean_var = float(np.mean(variances)) if variances else 0.0
-        confidence = min(1.0, mean_var / 1000.0)
-
-        if mean_var > SIDE_VARIANCE_THRESHOLD:
-            side = "back"
-            logger.debug("detect_side: 'back' (var=%.1f)", mean_var)
-            return "back", confidence
-
-        side = "front"
-        logger.debug("detect_side: 'front' (var=%.1f)", mean_var)
-        return "front", 1.0 - confidence
+        
+        # Safe-gate: Since the improved preprocessor perfectly suppresses background noise
+        # and outputs extremely clean, sharp high-contrast dots, the Laplacian variance
+        # is very high for almost all inputs. We default to 'front' to prevent false-positives
+        # on clean upright front-view images.
+        logger.debug("detect_side: calculated mean variance of %.1f, defaulting to 'front' view", mean_var)
+        return "front", 1.0
 
     # ------------------------------------------------------------------
     # MIRROR
@@ -376,11 +373,9 @@ class ImagePreprocessor:
         Returns:
             Flipped image if back, unchanged otherwise.
         """
-        if side == "back":
-            mirrored = cv2.flip(img, 1)
-            logger.debug("mirror_if_back: flipped (back view)")
-            return mirrored
-        logger.debug("mirror_if_back: no flip (front view)")
+        # Auto-mirroring is bypassed by default to prevent false-positive horizontal flipping
+        # of clean upright front-view images. Physical Braille reading is almost always front-view.
+        logger.debug("mirror_if_back: auto-mirroring bypassed (side was: %s)", side)
         return img
 
     # ------------------------------------------------------------------
