@@ -136,121 +136,49 @@ class BrailleAIPipeline:
     # CLASSIFIER INTEGRATION HELPERS
     # ------------------------------------------------------------------
 
-    def _classify_cells(
-        self,
-        cells: list[dict],
-        processed_img: np.ndarray,
-    ) -> tuple[list[dict], bool]:
-        """
-        Enrich cell dicts with EfficientNet-B3 predictions.
-
-        For each cell that has a valid bbox, crop it from the preprocessed
-        image and feed all crops through predict_batch() in a single forward
-        pass.  Cells where the classifier confidence is below
-        CLASSIFIER_FALLBACK_THRESHOLD retain their original pattern-based
-        confidence so the downstream decoder can fall back gracefully.
-
-        Args:
-            cells: Cell dicts from BrailleCellSegmenter.segment().
-            processed_img: Grayscale ndarray from ImagePreprocessor.
-
-        Returns:
-            Tuple of (enriched_cells, classifier_was_used).
-            enriched_cells: Same list with 'classifier_char' and
-                'classifier_confidence' keys added to each cell.
-            classifier_was_used: True if at least one cell was classified.
-        """
+    def _classify_cells(self, cells: list[dict], processed_img: np.ndarray) -> tuple[list[dict], bool]:
+        """Classify cells with standard preprocessing."""
+        from PIL import Image  # type: ignore
+        
         if not self.classifier.is_available():
             return cells, False
-
-        # Build index of cells that have a usable bbox.
-        # CRITICAL: skip blank/space cells (dot_count==0) — the neural classifier
-        # has no "space" output class so it will confidently predict a wrong letter,
-        # which destroys every word boundary the segmenter carefully inserted.
+        
         crop_indices: list[int] = []
         pil_crops: list = []
-
-        logger.info("[DEBUG] _classify_cells: Processing %d cells", len(cells))
-
+        
+        logger.info(f"[CLASSIFIER] Processing {len(cells)} cells")
+        
         for i, cell in enumerate(cells):
-            # Skip blank cells — preserve them as word-boundary spaces
-            if cell.get("dot_count", 0) == 0 or sum(cell.get("pattern", (0, 0, 0, 0, 0, 0))) == 0:
+            # Skip blank cells
+            if cell.get("dot_count", 0) == 0:
                 cell["classifier_char"] = " "
                 cell["classifier_confidence"] = 1.0
-                cell["classifier_top3"] = [{"char": " ", "confidence": 1.0}]
-                cell["low_confidence"] = False
-                logger.info("  Cell %d: BLANK (dot_count=0)", i)
                 continue
-
-            bbox = cell.get("bbox")
-            if not bbox or len(bbox) < 4:
-                logger.warning("  Cell %d: No valid bbox", i)
+            
+            # Get cell image
+            cell_image = cell.get('image')
+            if cell_image is None:
+                logger.warning(f"  Cell {i}: No image data")
                 continue
-
-            h_img, w_img = processed_img.shape[:2]
-            bx1, by1, bx2, by2 = bbox
-            bbox_w = bx2 - bx1
-            bbox_h = by2 - by1
             
-            # Calculate overlapping area with actual image boundaries
-            ix1 = max(0.0, bx1)
-            iy1 = max(0.0, by1)
-            ix2 = min(float(w_img), bx2)
-            iy2 = min(float(h_img), by2)
+            # Convert to PIL Image
+            if isinstance(cell_image, np.ndarray):
+                pil_image = Image.fromarray(cell_image.astype(np.uint8))
+            else:
+                pil_image = cell_image
             
-            intersection_area = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
-            bbox_area = bbox_w * bbox_h
+            # Predict
+            prediction = self.classifier.predict_single(pil_image)
             
-            is_clipped = False
-            if bbox_area > 0:
-                overlap_ratio = intersection_area / bbox_area
-                if overlap_ratio < 0.85:
-                    is_clipped = True
-                    logger.info("  Cell %d: CLIPPED by image boundaries (overlap=%.2f) — bypassing neural classifier", i, overlap_ratio)
+            cell["classifier_char"] = prediction['char']
+            cell["classifier_confidence"] = prediction['confidence']
             
-            if is_clipped:
-                # Disable classifier for this cell so it falls back to exact/fuzzy pattern matching
-                cell["classifier_char"] = "?"
-                cell["classifier_confidence"] = 0.0
-                cell["classifier_top3"] = []
-                cell["low_confidence"] = True
-                continue
-
-            pil = crop_cell_to_pil(processed_img, tuple(bbox), padding=0)  # padding already in bbox
-            if pil is None:
-                logger.warning("  Cell %d: Failed to crop from bbox=%s", i, bbox)
-                continue
             crop_indices.append(i)
-            pil_crops.append(pil)
-
-        if not pil_crops:
-            logger.warning("[DEBUG] No cells to classify")
-            return cells, False
-
-        try:
-            predictions = self.classifier.predict_batch(pil_crops)
-            logger.info("[DEBUG] Classifier raw predictions: %s", predictions)
-        except Exception as exc:
-            logger.warning("_classify_cells: predict_batch failed: %s", exc)
-            return cells, False
-
-        classifier_was_used = False
-        for list_pos, cell_idx in enumerate(crop_indices):
-            pred = predictions[list_pos]
-            cells[cell_idx]["classifier_char"] = pred["char"]
-            cells[cell_idx]["classifier_confidence"] = pred["confidence"]
-            cells[cell_idx]["classifier_top3"] = pred["top3"]
-            cells[cell_idx]["low_confidence"] = pred["low_confidence"]
-            logger.info(
-                "  Cell %d: classifier predicted='%s' conf=%.3f top3=%s",
-                cell_idx,
-                pred["char"],
-                pred["confidence"],
-                [(t["char"], round(t["confidence"], 3)) for t in pred.get("top3", [])],
-            )
-            classifier_was_used = True
-
-        return cells, classifier_was_used
+            pil_crops.append(pil_image)
+            
+            logger.info(f"  Cell {i}: '{prediction['char']}' (conf={prediction['confidence']:.3f})")
+        
+        return cells, len(crop_indices) > 0
 
     def _cells_to_predictions(self, cells: list[dict]) -> list[dict]:
         """
@@ -356,6 +284,277 @@ class BrailleAIPipeline:
               decoded_characters – list of per-cell result dicts:
                                    {char, confidence, cell_index, source}.
         """
+        img_h, img_w = processed_img.shape[:2]
+        aspect_ratio = img_w / img_h
+        
+        # Check if the cells span multiple lines by looking at their Y-coordinates spread
+        is_multiline = False
+        if cells:
+            ys = [c.get("y", 0.0) for c in cells]
+            if len(ys) > 1:
+                y_spread = max(ys) - min(ys)
+                if y_spread > 70.0:
+                    is_multiline = True
+
+        # ── Pathway A: Multi-Line Document Grid Segmentation ──────────
+        if is_multiline:
+            logger.info("[WORD-DECODE] Multiline document detected. Applying high-reliability multi-line grid segmentation.")
+            # Group cells into lines
+            lines_cells = self._group_cells_into_lines(cells, spacing_ds=20.0)
+            logger.info("[WORD-DECODE] Grouped into %d lines.", len(lines_cells))
+            
+            grid_cells = []
+            grid_decoded_chars = []
+            
+            global_cell_idx = 0
+            for line_idx, line in enumerate(lines_cells):
+                if not line:
+                    continue
+                # Find bounding box of this line
+                x_min = min(c["bbox"][0] for c in line)
+                x_max = max(c["bbox"][2] for c in line)
+                y_min = min(c["bbox"][1] for c in line)
+                y_max = max(c["bbox"][3] for c in line)
+                
+                # Add vertical padding
+                y_margin = 5
+                y_min_padded = max(0, int(y_min - y_margin))
+                y_max_padded = min(img_h, int(y_max + y_margin))
+                line_h = y_max_padded - y_min_padded
+                
+                word_width = x_max - x_min
+                
+                # Estimate expected cell count N for this line
+                expected_n = max(1, round(word_width / (line_h * 0.72)))
+                logger.info("[WORD-DECODE] Line %d: Grid bounds X=[%d, %d], Y=[%d, %d], expected cells N=%d", 
+                            line_idx, x_min, x_max, y_min_padded, y_max_padded, expected_n)
+                
+                cell_width = word_width / expected_n
+                for i in range(expected_n):
+                    cx1 = x_min + i * cell_width
+                    cx2 = x_min + (i + 1) * cell_width
+                    
+                    # Crop cell from the horizontal band
+                    cell_strip = processed_img[y_min_padded:y_max_padded, int(cx1):int(cx2)]
+                    h_c, w_c = cell_strip.shape[:2]
+                    if cell_strip.size == 0:
+                        continue
+                    
+                    # Pad to square
+                    max_dim = max(h_c, w_c)
+                    square_image = np.ones((max_dim, max_dim), dtype=np.uint8) * 255
+                    y_offset = (max_dim - h_c) // 2
+                    x_offset = (max_dim - w_c) // 2
+                    square_image[y_offset:y_offset+h_c, x_offset:x_offset+w_c] = cell_strip
+                    
+                    # bbox and center coordinates
+                    bbox = [round(cx1, 1), float(y_min_padded), round(cx2, 1), float(y_max_padded)]
+                    cx = cx1 + cell_width / 2
+                    cy = y_min_padded + line_h / 2
+                    
+                    # Check if this cell crop is blank (contains no dots / dark pixels)
+                    is_blank_cell = True
+                    if cell_strip.size > 0:
+                        # If any pixel in the cell strip is significantly darker than paper background (less than 200)
+                        if np.min(cell_strip) < 200:
+                            is_blank_cell = False
+                            
+                    # Predict
+                    if is_blank_cell:
+                        char = " "
+                        confidence = 1.0
+                        top3 = [{"char": " ", "confidence": 1.0}]
+                        low_conf = False
+                    elif self.classifier.is_available():
+                        from PIL import Image as PILImage
+                        pil_crop = PILImage.fromarray(square_image.astype(np.uint8))
+                        
+                        # Dynamically invert if light background
+                        mean_val = np.mean(square_image)
+                        if mean_val > 127:
+                            from PIL import ImageOps
+                            pil_crop_input = ImageOps.invert(pil_crop)
+                        else:
+                            pil_crop_input = pil_crop
+                            
+                        prediction = self.classifier.predict_single(pil_crop_input)
+                        char = prediction["char"]
+                        confidence = prediction["confidence"]
+                        top3 = prediction.get("top3", [])
+                        low_conf = prediction.get("low_confidence", False)
+                    else:
+                        char = "?"
+                        confidence = 0.0
+                        top3 = []
+                        low_conf = True
+                        
+                    # Map char back to pattern
+                    inv_map = {v: k for k, v in self.decoder.grade1.items() if len(k) == 6}
+                    pattern = inv_map.get(char.lower(), (0, 0, 0, 0, 0, 0))
+                    
+                    cell_dict = {
+                        "pattern": pattern,
+                        "confidence": confidence,
+                        "x": round(cx, 1),
+                        "y": round(cy, 1),
+                        "bbox": bbox,
+                        "dot_count": sum(pattern),
+                        "image": square_image,
+                        "classifier_char": char,
+                        "classifier_confidence": confidence,
+                        "classifier_top3": top3,
+                        "low_confidence": low_conf,
+                    }
+                    
+                    grid_cells.append(cell_dict)
+                    grid_decoded_chars.append({
+                        "char": char,
+                        "confidence": confidence,
+                        "cell_index": global_cell_idx,
+                        "source": "classifier" if self.classifier.is_available() else "pattern",
+                    })
+                    global_cell_idx += 1
+                
+                # Add a newline between lines if there is another line
+                if line_idx < len(lines_cells) - 1:
+                    grid_cells.append({
+                        "pattern": (0, 0, 0, 0, 0, 0),
+                        "confidence": 1.0,
+                        "x": x_max + 10.0,
+                        "y": y_min_padded + line_h / 2,
+                        "bbox": [x_max, float(y_min_padded), x_max + 20.0, float(y_max_padded)],
+                        "dot_count": 0,
+                        "image": None,
+                        "classifier_char": "\n",
+                        "classifier_confidence": 1.0,
+                        "classifier_top3": [],
+                        "low_confidence": False,
+                    })
+                    grid_decoded_chars.append({
+                        "char": "\n",
+                        "confidence": 1.0,
+                        "cell_index": global_cell_idx,
+                        "source": "blank",
+                    })
+                    global_cell_idx += 1
+                    
+            return grid_cells, grid_decoded_chars
+
+        # ── Pathway B: Single-Line Horizontal Grid Segmentation ──────────
+        # If it's a wide single-line image (aspect ratio >= 1.5) and not multiline
+        if aspect_ratio >= 1.5 and not is_multiline:
+            logger.info("[WORD-DECODE] Wide image detected (aspect_ratio=%.2f). Applying high-reliability horizontal grid segmentation.", aspect_ratio)
+            # Find horizontal bounds of dots
+            dark_pixels = np.where(processed_img < 200)
+            if len(dark_pixels[1]) > 0:
+                x_min = max(0, int(np.min(dark_pixels[1])) - 15)
+                x_max = min(img_w, int(np.max(dark_pixels[1])) + 15)
+            else:
+                x_min = 0
+                x_max = img_w
+            
+            word_width = x_max - x_min
+            
+            # Estimate N based on aspect ratio
+            active_ratio = word_width / img_h
+            expected_n = max(1, round(active_ratio / 0.55))
+            logger.info("[WORD-DECODE] Grid bounds: [%d, %d], word_width=%d, active_ratio=%.2f -> expected cells N=%d", x_min, x_max, word_width, active_ratio, expected_n)
+            
+            # Divide horizontally
+            cell_width = word_width / expected_n
+            grid_cells = []
+            grid_decoded_chars = []
+            
+            for i in range(expected_n):
+                cx1 = x_min + i * cell_width
+                cx2 = x_min + (i + 1) * cell_width
+                
+                # Crop and pad to square
+                cell_strip = processed_img[:, int(cx1):int(cx2)]
+                h_c, w_c = cell_strip.shape[:2]
+                max_dim = max(h_c, w_c)
+                square_image = np.ones((max_dim, max_dim), dtype=np.uint8) * 255
+                y_offset = (max_dim - h_c) // 2
+                x_offset = (max_dim - w_c) // 2
+                square_image[y_offset:y_offset+h_c, x_offset:x_offset+w_c] = cell_strip
+                
+                # We also need a bbox and center coordinates
+                bbox = [round(cx1, 1), 0.0, round(cx2, 1), float(img_h)]
+                cx = cx1 + cell_width / 2
+                cy = img_h / 2
+                
+                # Check if this cell crop is blank (contains no dots / dark pixels)
+                is_blank_cell = True
+                if cell_strip.size > 0:
+                    # If any pixel in the cell strip is significantly darker than paper background (less than 200)
+                    if np.min(cell_strip) < 200:
+                        is_blank_cell = False
+                        
+                # Predict
+                if is_blank_cell:
+                    char = " "
+                    confidence = 1.0
+                    top3 = [{"char": " ", "confidence": 1.0}]
+                    low_conf = False
+                elif self.classifier.is_available():
+                    from PIL import Image as PILImage
+                    pil_crop = PILImage.fromarray(square_image.astype(np.uint8))
+                    
+                    # Dynamically invert if light background
+                    mean_val = np.mean(square_image)
+                    if mean_val > 127:
+                        from PIL import ImageOps
+                        pil_crop_input = ImageOps.invert(pil_crop)
+                    else:
+                        pil_crop_input = pil_crop
+                        
+                    prediction = self.classifier.predict_single(pil_crop_input)
+                    char = prediction["char"]
+                    confidence = prediction["confidence"]
+                    top3 = prediction.get("top3", [])
+                    low_conf = prediction.get("low_confidence", False)
+                else:
+                    char = "?"
+                    confidence = 0.0
+                    top3 = []
+                    low_conf = True
+                
+                # Map char back to pattern
+                inv_map = {v: k for k, v in self.decoder.grade1.items() if len(k) == 6}
+                pattern = inv_map.get(char.lower(), (0, 0, 0, 0, 0, 0))
+                
+                cell_dict = {
+                    "pattern": pattern,
+                    "confidence": confidence,
+                    "x": round(cx, 1),
+                    "y": round(cy, 1),
+                    "bbox": bbox,
+                    "dot_count": sum(pattern),
+                    "image": square_image,
+                    "classifier_char": char,
+                    "classifier_confidence": confidence,
+                    "classifier_top3": top3,
+                    "low_confidence": low_conf,
+                }
+                
+                grid_cells.append(cell_dict)
+                grid_decoded_chars.append({
+                    "char": char,
+                    "confidence": confidence,
+                    "cell_index": i,
+                    "source": "classifier" if self.classifier.is_available() else "pattern",
+                })
+                
+                logger.info("  Cell %d (Grid): predicted='%s' conf=%.3f", i, char, confidence)
+                
+            # Log combined result
+            decoded_word = "".join(c["char"] for c in grid_decoded_chars)
+            avg_conf = float(np.mean([c["confidence"] for c in grid_decoded_chars])) if grid_decoded_chars else 0.0
+            logger.info("[WORD-DECODE] Raw decoded word (Grid): '%s'", decoded_word)
+            logger.info("[WORD-DECODE] Average confidence (Grid): %.3f", avg_conf)
+            
+            return grid_cells, grid_decoded_chars
+
         logger.info(
             "[WORD-DECODE] Starting character-by-character decoding for %d cells",
             len(cells),

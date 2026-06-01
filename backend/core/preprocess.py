@@ -153,10 +153,10 @@ class ImagePreprocessor:
 
     def remove_shadows(self, img: np.ndarray) -> np.ndarray:
         """
-        Remove cast shadows using morphological background estimation.
+        Remove cast shadows using morphological black-hat background subtraction.
 
-        Dilates the image to get a background estimate, then divides
-        the original by the background to normalise illumination.
+        Dilates the image to get a background estimate, then subtracts
+        the original from the background to normalise illumination.
 
         Args:
             img: Grayscale ndarray.
@@ -167,13 +167,13 @@ class ImagePreprocessor:
         kernel = np.ones((SHADOW_KERNEL_SIZE, SHADOW_KERNEL_SIZE), np.uint8)
         background = cv2.dilate(img, kernel, iterations=SHADOW_DILATE_ITER)
 
-        # Divide to normalise — avoid zero division
-        img_f = img.astype(np.float32)
-        bg_f = background.astype(np.float32)
-        normalised = (img_f / (bg_f + 1e-6)) * 255.0
-        normalised = np.clip(normalised, 0, 255).astype(np.uint8)
+        # Subtract original from background to cancel illumination variations
+        diff = cv2.subtract(background, img)
+        
+        # Invert so dots are dark on a perfectly clean white background
+        normalised = cv2.bitwise_not(diff)
 
-        logger.debug("remove_shadows: completed")
+        logger.debug("remove_shadows: completed via subtraction")
         return normalised
 
     # ------------------------------------------------------------------
@@ -470,14 +470,14 @@ class ImagePreprocessor:
         # 3 – grayscale
         gray = gray_for_quality
 
-        # 4 – CLAHE (enhance local contrast)
-        clahe_img = self.apply_clahe(gray)
+        # 4 – shadow removal FIRST (normalises uneven lighting on raw grayscale)
+        no_shadow = self.remove_shadows(gray)
 
-        # 5 – shadow removal (normalises uneven lighting)
-        no_shadow = self.remove_shadows(clahe_img)
+        # 5 – CLAHE SECOND (enhance local contrast on normalised background)
+        clahe_img = self.apply_clahe(no_shadow)
 
         # 6 – mild Gaussian denoising to smooth noise before detection
-        denoised = cv2.GaussianBlur(no_shadow, (3, 3), 0)
+        denoised = cv2.GaussianBlur(clahe_img, (3, 3), 0)
 
         # 7 – perspective correction on the grayscale image
         #      (more edge information than binary — better contour detection)

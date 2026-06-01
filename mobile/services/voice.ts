@@ -190,10 +190,19 @@ export const VoiceService = {
     const targetLang = store.targetLanguage;
 
     if (Platform.OS === 'web') {
+      const unsuppress = () => {
+        try {
+          const VoiceCommandEngine = require('./voiceCommands').default;
+          VoiceCommandEngine.setSuppressed(false);
+        } catch (_) {}
+      };
+
       // Fire browser SpeechSynthesis immediately — no network round-trip
       const utterance = new (window as any).SpeechSynthesisUtterance(message);
       utterance.lang = targetLang;
       utterance.rate = 1.1;
+      utterance.onend = unsuppress;
+      utterance.onerror = unsuppress;
       (window as any).speechSynthesis.speak(utterance);
 
       // Silently try to upgrade to neural audio in background (non-blocking)
@@ -203,6 +212,14 @@ export const VoiceService = {
           if (!(window as any).speechSynthesis.speaking) {
             if (currentWebSound) currentWebSound.pause();
             currentWebSound = new (window as any).Audio(`data:audio/mp3;base64,${base64Audio}`);
+            currentWebSound.onended = () => {
+              currentWebSound = null;
+              unsuppress();
+            };
+            currentWebSound.onerror = () => {
+              currentWebSound = null;
+              unsuppress();
+            };
             currentWebSound.play();
           }
         })

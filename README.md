@@ -158,6 +158,7 @@ The `BrailleCellSegmenter` (`core/segmenter.py`) groups coordinate lists into 6-
 Segmented cell crops are routed to `CellClassifier` (`ai/models/cell_classifier.py`):
 * **EfficientNet-B3 Backbone:** Cropped cell images are fed directly to a custom classifier trained on **300K+ images** (achieving **96.82% validation accuracy**).
 * **TorchScript Execution:** Runs fast inference on CPU or CUDA via compiled TorchScript serialization (`braille_scripted.pt`).
+* **Standard ML Preprocessing Alignment:** Performs grayscale conversion, squarish canvas padding, resizing to `128x128` px, and scaling to `[0, 1]` normalized range. Crucially, it uses **no histogram equalization** and **no binary thresholding** (preserving natural pixel gradients) to match the model's training pipeline exactly.
 * **Space Cell Bypass:** Instantly flags blank background cells (dot count of 0) as spaces (`" "`), bypassing neural forward passes entirely to avoid false predictions and preserve word boundaries.
 
 ### Step 5: Braille Decoding
@@ -420,6 +421,44 @@ Full pipeline capture path.
 * **`POST /api/translate`** — Translates input text into 6 supported languages.
 * **`GET /api/history`** — Fetches paginated past scans with search capabilities.
 * **`DELETE /api/history/{id}`** — Removes scan records and associated cached audio.
+
+---
+
+## 🤖 Model Architecture & Datasets
+
+BrailleVision AI features a hybrid model ecosystem designed to process low-contrast physical paper scans accurately:
+
+* **EfficientNet-B3 Classifier**:
+  - **Backbone**: Pre-trained EfficientNet-B3 optimized for high-capacity character recognition.
+  - **Output Classes**: 46 target Braille classes mapping standard characters `a`–`z`, numbers `0`–`9`, capitals (`[CAP]`), and numeric registers (`[NUM]`).
+  - **Dataset**: Trained on a dataset of **300,000+ augmented Braille cell crops** representing multiple paper types, lighting angles, scale variations, and physical noise profiles.
+  - **Accuracy**: Achieves **96.82% validation accuracy** on single cells.
+
+* **YOLOv8 Nano Detector**:
+  - **Backbone**: Custom-trained Ultralytics YOLOv8 Nano object detection model.
+  - **Task**: High-speed, high-precision detection of embossed dot coordinates on warped sheets.
+  - **Input**: Operates directly on shadows-removed CLAHE grayscale images.
+
+---
+
+## 🧪 Testing & Validation
+
+A comprehensive automated Pytest test suite validates every module across the computer vision and linguistic translation layers:
+
+* **Pytest Test Files (`backend/tests/`)**:
+  - `test_decoder.py`: Validates Grade 1 & Grade 2 lookup, capitals, numbers, and fuzzy Hamming distance fallback decoding.
+  - `test_segmenter.py`: Verifies row-clustering via DBSCAN, dynamically estimated cell gap metrics, and noise filter thresholds.
+  - `test_sentence_decode.py`: Validates blank space boundaries bypass, neural classifier overrides, and multi-space collapsing.
+  - `test_word_decoding.py`: Checks correct horizontal sequence and single-word layout compilation.
+  - `test_single_cell_bypass.py`: Verifies aspect ratio and resolution gates to bypass the full CV pipeline for quick cropped single-cell uploads.
+  - `test_repetition_fix.py`: Ensures repetition heuristics successfully detect grid over-segmentation and adjust DBSCAN parameters dynamically.
+
+* **Executing the Test Suite**:
+  Run the automated test runner in the backend directory:
+  ```bash
+  cd backend
+  pytest -v
+  ```
 
 ---
 

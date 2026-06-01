@@ -149,7 +149,7 @@ export default function UploadScreen() {
       </View>
 
       {/* Loading state */}
-      {loading && (
+      {loading && !uploadedImageUri && (
         <View style={styles.loaderContainer}>
           <ActivityIndicator size="large" color={COLORS.primary} />
           <Text style={styles.loaderText}>Processing File. Please wait...</Text>

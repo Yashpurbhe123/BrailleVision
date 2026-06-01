@@ -372,12 +372,43 @@ class CellClassifier:
             ),
         }
 
+    def preprocess_image_from_array(self, img_array: np.ndarray):
+        """
+        Convert numpy array to tensor with STANDARD Braille preprocessing.
+        
+        This matches the most common Braille ML training pipeline:
+        1. Grayscale conversion
+        2. Resize to standard size (128x128 to match model)
+        3. Normalize to [0, 1]
+        4. NO histogram equalization (can hurt accuracy)
+        5. NO thresholding (preserve gradient info)
+        """
+        import torch  # type: ignore
+        
+        # 1. Ensure grayscale
+        if len(img_array.shape) == 3:
+            img_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2GRAY)
+        
+        # 2. Resize to standard size (IMPORTANT: match your training size)
+        # If your model expects 64x64, use 64. If 128x128, use 128
+        STANDARD_SIZE = 128  # Matches MODEL_INPUT_SIZE
+        img_resized = cv2.resize(img_array, (STANDARD_SIZE, STANDARD_SIZE), interpolation=cv2.INTER_LINEAR)
+        
+        # 3. Normalize to [0, 1] range (most common for neural networks)
+        img_normalized = img_resized.astype(np.float32) / 255.0
+        
+        # 4. Convert to tensor
+        tensor = torch.from_numpy(img_normalized).unsqueeze(0).unsqueeze(0)  # Add batch and channel dims
+        
+        return tensor
+
     def preprocess_pil_image(self, pil_image: Image.Image) -> Image.Image:
         """
         Preprocess PIL image to match training conditions:
         1. Grayscale conversion.
         2. Resize to intermediate STANDARD_SIZE (64x64).
-        3. Histogram equalization.
+        3. NO histogram equalization (can hurt accuracy).
+        4. NO thresholding (preserve gradient info).
         """
         # 1. Convert to grayscale if needed
         if pil_image.mode != 'L':
@@ -385,13 +416,9 @@ class CellClassifier:
         
         # 2. Resize to standard size (e.g. 64x64)
         STANDARD_SIZE = 64
-        pil_image = pil_image.resize((STANDARD_SIZE, STANDARD_SIZE), Image.LANCZOS)
+        pil_image = pil_image.resize((STANDARD_SIZE, STANDARD_SIZE), Image.BILINEAR)
         
-        # 3. Apply histogram equalization
-        img_array = np.array(pil_image)
-        img_array = cv2.equalizeHist(img_array)
-        
-        return Image.fromarray(img_array)
+        return pil_image
 
     def predict_single(self, pil_image: Image.Image) -> dict:
         """
